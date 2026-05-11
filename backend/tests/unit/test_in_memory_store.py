@@ -38,9 +38,10 @@ def store(graph: SchemaGraph, isolated_data_dir: Path) -> InMemoryStore:
 
 
 def test_loads_all_entity_buckets(store: InMemoryStore) -> None:
-    assert len(store._data["incident"]) == 10  # noqa: SLF001
+    # 5 incidents from PDF + 1 synthetic (INC0012350) for dangling-ref test
+    assert len(store._data["incident"]) == 6  # noqa: SLF001
     assert len(store._data["sys_user"]) == 10  # noqa: SLF001
-    assert len(store._data["sys_user_group"]) == 4  # noqa: SLF001
+    assert len(store._data["sys_user_group"]) == 5  # noqa: SLF001
     assert len(store._data["kb_knowledge"]) == 5  # noqa: SLF001
 
 
@@ -91,7 +92,7 @@ def test_find_eq_with_integer_value(store: InMemoryStore) -> None:
         "incident", [Filter(field="state", operator="eq", value=2)]
     )
     numbers = {r["number"] for r in in_progress}
-    assert numbers == {"INC0012345", "INC0012348", "INC0012354"}
+    assert numbers == {"INC0012345", "INC0012348", "INC0012349"}
 
 
 def test_find_eq_with_value_map_display_string(store: InMemoryStore) -> None:
@@ -102,7 +103,7 @@ def test_find_eq_with_value_map_display_string(store: InMemoryStore) -> None:
     assert {r["number"] for r in in_progress} == {
         "INC0012345",
         "INC0012348",
-        "INC0012354",
+        "INC0012349",
     }
 
 
@@ -125,8 +126,9 @@ def test_find_neq_returns_complement(store: InMemoryStore) -> None:
     not_resolved = store.find(
         "incident", [Filter(field="state", operator="neq", value=4)]
     )
+    # PDF data has no Resolved incidents, so this just sanity-checks the
+    # neq operator: every row must have state != 4.
     assert all(r["state"] != 4 for r in not_resolved)
-    assert "INC0012351" not in {r["number"] for r in not_resolved}  # 0012351 is Resolved
 
 
 def test_find_in_with_value_map_displays(store: InMemoryStore) -> None:
@@ -135,7 +137,8 @@ def test_find_in_with_value_map_displays(store: InMemoryStore) -> None:
         [Filter(field="state", operator="in", value=["New", "In Progress", "On Hold"])],
     )
     assert all(r["state"] in (1, 2, 3) for r in open_states)
-    assert len(open_states) == 7  # 7 open incidents in fixture
+    # All 6 incidents in the fixture are open (5 PDF + INC0012350 dangling).
+    assert len(open_states) == 6
 
 
 def test_find_in_with_integer_list(store: InMemoryStore) -> None:
@@ -143,7 +146,7 @@ def test_find_in_with_integer_list(store: InMemoryStore) -> None:
         "incident",
         [Filter(field="state", operator="in", value=[1, 2, 3])],
     )
-    assert len(open_states) == 7
+    assert len(open_states) == 6
 
 
 def test_find_contains_substring_case_insensitive(store: InMemoryStore) -> None:
@@ -189,7 +192,13 @@ def test_find_combined_filters_and_semantics(store: InMemoryStore) -> None:
             Filter(field="priority", operator="eq", value="High"),
         ],
     )
-    assert {r["number"] for r in high_open} == {"INC0012345", "INC0012348", "INC0012349"}
+    # In PDF data, High priority (=2) open incidents are INC0012345 + INC0012348.
+    # INC0012350 (synthetic) is also priority 2 + state 1 (New).
+    assert {r["number"] for r in high_open} == {
+        "INC0012345",
+        "INC0012348",
+        "INC0012350",
+    }
 
 
 def test_find_respects_limit(store: InMemoryStore) -> None:
@@ -268,11 +277,11 @@ def test_create_increments_incident_number(store: InMemoryStore) -> None:
             "priority": 3,
             "category": "Software",
             "caller_id": "usr001",
-            "assignment_group": "grp001",
+            "assignment_group": "grp_desktop",
         },
     )
-    # Existing max in fixture is INC0012354 -> next is INC0012355
-    assert new["number"] == "INC0012355"
+    # Existing max in fixture is INC0012350 -> next is INC0012351
+    assert new["number"] == "INC0012351"
 
 
 def test_create_preserves_explicit_caller_id(store: InMemoryStore) -> None:
@@ -284,7 +293,7 @@ def test_create_preserves_explicit_caller_id(store: InMemoryStore) -> None:
             "priority": 3,
             "category": "Software",
             "caller_id": "usr007",
-            "assignment_group": "grp003",
+            "assignment_group": "grp_cloud",
         },
     )
     assert new["caller_id"] == "usr007"
@@ -340,8 +349,8 @@ def test_reference_fields_returned_raw_as_sys_ids(store: InMemoryStore) -> None:
         "incident", [Filter(field="number", operator="eq", value="INC0012345")]
     )
     assert vpn["caller_id"] == "usr001"
-    assert vpn["assigned_to"] == "usr004"
-    assert vpn["assignment_group"] == "grp002"
+    assert vpn["assigned_to"] == "usr003"
+    assert vpn["assignment_group"] == "grp_network"
 
 
 # ---------- value-mapped fields stored as integer codes ---------------------

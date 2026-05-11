@@ -1,34 +1,32 @@
 [
   {
-    "sys_id": "grp001",
-    "name": "Desktop Support",
-    "manager": "usr004",
-    "category": "Hardware",
-    "sys_created_on": "2020-01-15T08:00:00Z",
-    "sys_updated_on": "2026-01-15T08:00:00Z"
-  },
-  {
-    "sys_id": "grp002",
+    "sys_id": "grp_network",
     "name": "Network Operations",
-    "manager": "usr009",
-    "category": "Network",
-    "sys_created_on": "2019-06-01T08:00:00Z",
-    "sys_updated_on": "2026-01-15T08:00:00Z"
+    "manager": "usr010",
+    "category": "Network"
   },
   {
-    "sys_id": "grp003",
+    "sys_id": "grp_desktop",
+    "name": "Desktop Support",
+    "manager": "usr010",
+    "category": "Software"
+  },
+  {
+    "sys_id": "grp_facilities",
+    "name": "Facilities Management",
+    "manager": "usr010",
+    "category": "Facilities"
+  },
+  {
+    "sys_id": "grp_cloud",
     "name": "Cloud Infrastructure",
-    "manager": "usr007",
-    "category": "Cloud",
-    "sys_created_on": "2022-03-01T08:00:00Z",
-    "sys_updated_on": "2026-02-01T08:00:00Z"
+    "manager": "usr010",
+    "category": "Cloud Services"
   },
   {
-    "sys_id": "grp004",
-    "name": "Facilities Support",
-    "manager": "usr003",
-    "category": "Facilities",
-    "sys_created_on": "2021-09-01T08:00:00Z",
-    "sys_updated_on": "2025-12-15T08:00:00Z"
+    "sys_id": "grp_security",
+    "name": "Security Operations",
+    "manager": "usr010",
+    "category": "Security"
   }
 ]

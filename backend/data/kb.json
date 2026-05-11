@@ -1,52 +1,47 @@
 [
   {
-    "sys_id": "kb-9c1f0a01",
+    "sys_id": "kb001",
     "number": "KB0045678",
-    "short_description": "VPN connection issues with GlobalProtect",
-    "text": "If your GlobalProtect VPN is failing to connect, the most common cause is a recent password change. Wait at least 15 minutes after changing your password before attempting to reconnect, since the new credentials need to propagate to the VPN gateway.\n\nIf the issue persists:\n1. Confirm GlobalProtect is updated to the latest client version.\n2. Switch portals (US-East-1 → US-West-2) to rule out a regional outage.\n3. Capture the GlobalProtect log (Help → Collect Logs) and attach it to a ticket if Network Operations needs to investigate further.",
+    "short_description": "How to troubleshoot VPN connectivity issues",
+    "text": "If you are unable to connect to VPN using GlobalProtect: 1. Restart the GlobalProtect client. 2. Clear cached credentials by navigating to Settings > Sign Out. 3. Reconnect using your network credentials. 4. If the issue persists after a password reset, wait 15 minutes for credential sync to complete. 5. Contact Network Operations if the problem continues.",
     "kb_category": "Network",
     "workflow_state": "published",
-    "sys_created_on": "2024-03-12T10:00:00Z",
-    "sys_updated_on": "2026-01-09T08:30:00Z"
+    "sys_updated_on": "2026-04-15 10:00:00"
   },
   {
-    "sys_id": "kb-9c1f0a02",
+    "sys_id": "kb002",
     "number": "KB0045679",
-    "short_description": "Outlook crashes on startup",
-    "text": "When Outlook crashes immediately after launch, the cause is usually a misbehaving add-in or a corrupted profile.\n\nFirst, open Outlook in Safe Mode by holding Ctrl while clicking the Outlook icon, then choose Yes when prompted. If Outlook stays open in Safe Mode, the problem is an add-in.\n\nDisable add-ins one at a time (File → Options → Add-ins → Manage: COM Add-ins → Go) and restart Outlook normally between each. If Safe Mode itself crashes, create a new Outlook profile from Control Panel → Mail.",
+    "short_description": "Fixing Outlook 365 crash on startup",
+    "text": "If Outlook crashes on startup: 1. Open Outlook in Safe Mode (hold Ctrl while clicking the Outlook icon). 2. Disable all add-ins via File > Options > Add-ins. 3. Restart normally. 4. If the issue persists, repair the Office installation via Control Panel > Programs > Microsoft 365 > Change > Repair. 5. As a last resort, delete the Outlook profile and create a new one.",
     "kb_category": "Software",
     "workflow_state": "published",
-    "sys_created_on": "2024-05-21T09:00:00Z",
-    "sys_updated_on": "2025-08-04T14:00:00Z"
+    "sys_updated_on": "2026-03-20 14:30:00"
   },
   {
-    "sys_id": "kb-9c1f0a03",
+    "sys_id": "kb003",
     "number": "KB0045680",
-    "short_description": "Request access to a SharePoint site",
-    "text": "To request access to a SharePoint site, submit a request through the Service Catalog. Open https://servicecatalog.acme.com, search for \"SharePoint Access\", and pick the site from the dropdown.\n\nThe owner of the site will receive an approval task; access is typically granted within one business day. If you need access urgently, ping #it-help in Slack with the site URL and your manager's name.",
-    "kb_category": "Software",
+    "short_description": "Requesting access to shared drives and SharePoint sites",
+    "text": "To request access to a shared drive or SharePoint site: 1. Identify the site owner (usually your team lead or project manager). 2. Submit a request through the IT Service Catalog under 'SharePoint Access Request'. 3. Provide the URL of the SharePoint site and the level of access needed (view, edit, or admin). 4. Approvals typically take 24-48 hours.",
+    "kb_category": "Cloud Services",
     "workflow_state": "published",
-    "sys_created_on": "2024-09-02T11:00:00Z",
-    "sys_updated_on": "2026-02-16T10:00:00Z"
+    "sys_updated_on": "2026-04-01 09:00:00"
   },
   {
-    "sys_id": "kb-9c1f0a04",
+    "sys_id": "kb004",
     "number": "KB0045681",
-    "short_description": "Building access badge not working",
-    "text": "If your access badge has stopped working, visit the Security desk in the lobby. They can re-encode your badge on the spot (takes around 5 minutes) and verify your access groups against the building directory.\n\nCommon causes are demagnetization (proximity to phones or magnetic clasps), expired physical-access entitlements after a role change, or a damaged badge that needs to be reissued.",
+    "short_description": "What to do when your employee badge stops working",
+    "text": "If your badge is not working: 1. Visit the Security desk in the lobby with a valid photo ID. 2. Security will verify your identity and test your badge. 3. If the badge is demagnetized, a replacement will be issued on the spot. 4. Temporary badges are available for immediate access while waiting for a replacement. 5. Badge replacements are free for the first occurrence and $25 subsequently.",
     "kb_category": "Facilities",
     "workflow_state": "published",
-    "sys_created_on": "2025-01-15T13:00:00Z",
-    "sys_updated_on": "2025-12-01T09:00:00Z"
+    "sys_updated_on": "2026-02-10 11:00:00"
   },
   {
-    "sys_id": "kb-9c1f0a05",
+    "sys_id": "kb005",
     "number": "KB0045682",
-    "short_description": "Laptop slow or unresponsive after Windows update",
-    "text": "After a major Windows update, laptops sometimes become sluggish for the first few days while the system re-indexes and reinstalls drivers.\n\nIf performance does not recover after 48 hours:\n1. Run Disk Cleanup (Win+R → cleanmgr.exe) and clear the previous Windows installation files — this commonly frees 10–20 GB.\n2. Disable startup programs you do not need (Task Manager → Startup tab).\n3. Verify storage is below 80% full; SSDs slow down dramatically near capacity.",
+    "short_description": "Resolving slow laptop performance after Windows updates",
+    "text": "If your laptop is slow after a Windows update: 1. Restart your laptop (not just sleep/wake). 2. Check for pending updates in Settings > Windows Update and install any remaining patches. 3. Open Task Manager (Ctrl+Shift+Esc) and check for high CPU/disk usage processes. 4. Run Disk Cleanup to remove temporary update files. 5. If issues persist, contact Desktop Support for a diagnostic session.",
     "kb_category": "Hardware",
     "workflow_state": "published",
-    "sys_created_on": "2025-03-10T08:00:00Z",
-    "sys_updated_on": "2026-01-22T12:00:00Z"
+    "sys_updated_on": "2026-04-25 16:00:00"
   }
 ]
