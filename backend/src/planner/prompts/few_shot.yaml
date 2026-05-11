@@ -72,6 +72,19 @@ examples:
       output_spec: {format: list, final_var: out, max_items_shown: 20}
       confidence: 0.85
 
+  - query: "Show me the team that handles Ravi Kumar's tickets"
+    intent_hint: "cross_reference; the verb 'handles' (or 'works on', 'is responsible for') flips 'X's tickets' from caller to assignee. IT-support users are agents who handle tickets, not raise them — falling back to the caller chain returns 0 results."
+    plan:
+      intent: cross_reference
+      reasoning: "The phrase 'team that handles X's tickets' refers to the assignment_group of incidents currently assigned to X (the assignee chain), NOT the incidents X reported as a caller. Hop chain: user -> incidentsAssigned -> group (via incident.handledBy). Resolve the team name and category."
+      operations:
+        - {op: find, id: u, entity: sys_user, filters: [{field: name, operator: eq, value: "Ravi Kumar"}]}
+        - {op: traverse, id: handled, from: $u, relation: sys_user.incidentsAssigned}
+        - {op: traverse, id: teams, from: $handled, relation: incident.handledBy}
+        - {op: resolve, id: out, source: $teams, fields: [name, category], include_relations: [managedBy]}
+      output_spec: {format: list, final_var: out, max_items_shown: 10}
+      confidence: 0.9
+
   - query: "Close INC0012345"
     intent_hint: "write_proposal"
     plan:

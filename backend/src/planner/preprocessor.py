@@ -19,6 +19,7 @@ class EntityMention(BaseModel):
     entity_type: str
     resolved_sys_id: str | None = None
     candidates: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class PreprocessorOutput(BaseModel):
@@ -134,7 +135,24 @@ class Preprocessor:
             system=system,
             temperature=0.0,
         )
-        return PreprocessorOutput.model_validate(raw)
+        out = PreprocessorOutput.model_validate(raw)
+        self._enrich_user_mentions(out)
+        return out
+
+    def _enrich_user_mentions(self, out: PreprocessorOutput) -> None:
+        """Attach role-relevant fields (department, location) to each
+        resolved sys_user mention. Lets the planner pick the right relation
+        for phrases like 'X's tickets' — end users are callers, IT agents
+        are assignees."""
+        for m in out.entity_mentions:
+            if m.entity_type != "sys_user" or not m.resolved_sys_id:
+                continue
+            rec = self._name_resolver.lookup(m.resolved_sys_id)
+            if not rec:
+                continue
+            for key in ("department", "location"):
+                if key in rec and rec[key] is not None:
+                    m.details[key] = rec[key]
 
     def _format_candidates(self, query: str) -> str:
         # Cheap heuristic: try every capitalised token & every two-token

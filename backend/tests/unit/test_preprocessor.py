@@ -59,6 +59,57 @@ async def test_lookup_intent_parses_into_output(
 
 
 @pytest.mark.asyncio
+async def test_user_mention_enriched_with_department(
+    preprocessor: tuple[Preprocessor, AsyncMock],
+) -> None:
+    """Ravi Kumar (usr003) is in IT Support. The preprocessor must surface
+    that department on the EntityMention so the planner can route 'X's
+    tickets' to assignee rather than caller for IT agents."""
+    pre, tool_call = preprocessor
+    tool_call.return_value = {
+        "intent": "lookup",
+        "rewritten_query": "Show me Ravi Kumar's tickets",
+        "entity_mentions": [
+            {
+                "surface": "Ravi Kumar",
+                "entity_type": "sys_user",
+                "resolved_sys_id": "usr003",
+                "candidates": ["usr003"],
+            }
+        ],
+        "relevant_entities": ["sys_user", "incident"],
+        "notes": "",
+    }
+    out = await pre.process("Show me Ravi Kumar's tickets")
+    assert out.entity_mentions[0].details.get("department") == "IT Support"
+    assert out.entity_mentions[0].details.get("location") == "Bangalore"
+
+
+@pytest.mark.asyncio
+async def test_non_user_mention_not_enriched(
+    preprocessor: tuple[Preprocessor, AsyncMock],
+) -> None:
+    """Only sys_user mentions get enriched; group / incident mentions don't."""
+    pre, tool_call = preprocessor
+    tool_call.return_value = {
+        "intent": "analytical",
+        "rewritten_query": "How many incidents does Desktop Support have?",
+        "entity_mentions": [
+            {
+                "surface": "Desktop Support",
+                "entity_type": "sys_user_group",
+                "resolved_sys_id": "grp_desktop",
+                "candidates": ["grp_desktop"],
+            }
+        ],
+        "relevant_entities": ["sys_user_group", "incident"],
+        "notes": "",
+    }
+    out = await pre.process("How many incidents does Desktop Support have?")
+    assert out.entity_mentions[0].details == {}
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_intent_parses(
     preprocessor: tuple[Preprocessor, AsyncMock],
 ) -> None:

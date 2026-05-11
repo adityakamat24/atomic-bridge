@@ -66,10 +66,14 @@ The Priority field has values: Critical, High, Medium, Low, Planning.
 
 ## "X's tickets" / "X's incidents" — caller vs. assignee
 
-When the user references incidents that "belong to" a person:
+When the user references incidents that "belong to" a person, the right relation depends on the user's role. The `Resolved entities` block above includes the user's `department` for every resolved `sys_user`. Use it:
+
 - **"X's tickets"**, **"tickets X raised"**, **"issues X reported"** → caller. Traverse `sys_user.incidentsReported`.
-- **"What X is working on"**, **"X's assignments"**, **"tickets assigned to X"** → assignee. Traverse `sys_user.incidentsAssigned`.
-- **"X's incidents"** without qualifier → ambiguous; default to caller (incidentsReported), since the most common natural reading is "the incidents X raised".
+- **"What X is working on"**, **"X's assignments"**, **"tickets assigned to X"**, **"team that handles X's tickets"** → assignee. Traverse `sys_user.incidentsAssigned`.
+- **"X's tickets" / "X's incidents" without a qualifier verb** → use the user's `department` to disambiguate:
+  - If `department` matches `IT Support`, `IT Operations`, `Facilities`, `Security`, or any team that **handles** tickets → traverse `sys_user.incidentsAssigned` (these users are agents who close tickets, not employees who raise them).
+  - Otherwise (e.g. `Engineering`, `Marketing`, `Finance`, `Product`, `Sales`) → traverse `sys_user.incidentsReported` (these users are end-users who report issues).
+  - If `department` is missing or you cannot tell, default to caller (`incidentsReported`).
 
 ## "X's team" — disambiguating informal team membership
 

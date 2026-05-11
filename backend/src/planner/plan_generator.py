@@ -78,11 +78,17 @@ class PlanGenerator:
 def _format_entities(items: list[EntityMention]) -> str:
     if not items:
         return "(none — the question has no resolved entity mentions)"
-    return "\n".join(
-        f"- {m.surface!r}: {m.entity_type} -> sys_id={m.resolved_sys_id} "
-        f"(candidates: {m.candidates})"
-        for m in items
-    )
+    lines: list[str] = []
+    for m in items:
+        detail_str = ""
+        if m.details:
+            pairs = ", ".join(f"{k}={v!r}" for k, v in m.details.items())
+            detail_str = f" [{pairs}]"
+        lines.append(
+            f"- {m.surface!r}: {m.entity_type} -> sys_id={m.resolved_sys_id}"
+            f"{detail_str} (candidates: {m.candidates})"
+        )
+    return "\n".join(lines)
 
 
 def _normalise_plan(raw: dict[str, Any]) -> dict[str, Any]:

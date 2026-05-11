@@ -354,6 +354,64 @@ def test_resolve_inlines_relation_display_names(
     assert rec["assignedTo"] == "Ravi Kumar"
 
 
+# ---------- Category bridge: KB ↔ incident via category --------------------
+
+
+def test_kb_to_incidents_via_category_bridge(
+    engine_with_kb: ExecutionEngine, isolated_data_dir: Path
+) -> None:
+    """The PDF specifically names 'a KB article's kb_category maps to an
+    incident's category' as a relationship that should be an edge. This test
+    proves the bridge works end-to-end: take the VPN KB article, follow its
+    category to the incidents in that same category, resolve them."""
+    g = load(isolated_data_dir / "schema.yaml")
+    plan = QueryPlan(
+        intent="cross_reference",
+        reasoning="VPN KB article -> category -> incidents in same category",
+        operations=[
+            FindOp(
+                id="kb",
+                entity="kb_knowledge",
+                filters=[Filter(field="number", operator="eq", value="KB0045678")],
+            ),
+            TraverseOp.model_validate(
+                {"op": "traverse", "id": "cat", "from": "$kb",
+                 "relation": "kb_knowledge.inCategory"}
+            ),
+            TraverseOp.model_validate(
+                {"op": "traverse", "id": "inc", "from": "$cat",
+                 "relation": "category.incidentsInCategory"}
+            ),
+            ResolveOp(id="out", source="$inc", fields=["number", "category"]),
+        ],
+        output_spec=OutputSpec(format="list", final_var="out"),
+        confidence=0.9,
+    )
+    plan = _validate(g, plan)
+    result = engine_with_kb.execute(plan)
+    numbers = {r["number"] for r in result.output}
+    # INC0012345 is the VPN incident, Network category — same as KB0045678.
+    assert "INC0012345" in numbers
+    assert all(r["category"] == "Network" for r in result.output)
+
+
+def test_category_resolves_to_human_display_name(
+    engine: ExecutionEngine, isolated_data_dir: Path
+) -> None:
+    """Grouping by assignment_group surfaces a `_raw` sys_id but the display
+    `key` for the new category entity should be the human name (which equals
+    the sys_id by construction, so no `key_raw` should be emitted here)."""
+    from src.core.in_memory_store import InMemoryStore
+    from src.executor.reference_resolver import ReferenceResolver
+    g = load(isolated_data_dir / "schema.yaml")
+    store = InMemoryStore(g, isolated_data_dir)
+    resolver = ReferenceResolver(g, store)
+    assert resolver.display_name_of("category", "Network") == "Network"
+    assert resolver.display_name_of("category", "Cloud Services") == "Cloud Services"
+    # Missing category still produces the dangling-ref marker.
+    assert resolver.display_name_of("category", "Bogus").startswith("[Unknown")
+
+
 # ---------- Dangling reference --------------------------------------------
 
 

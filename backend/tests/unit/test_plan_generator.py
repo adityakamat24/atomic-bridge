@@ -144,8 +144,11 @@ async def test_prompt_subgraph_filter_expands_along_relations(
     # Related entities pulled in by the BFS expansion:
     assert "## sys_user" in system
     assert "## sys_user_group" in system
-    # Unrelated entity stays filtered out:
-    assert "## kb_knowledge" not in system
+    # Category is 1 hop from incident (via incident.inCategory) and kb_knowledge
+    # is 2 hops (via category.kbArticlesInCategory). Both must be reachable so
+    # the planner can model the documented incident↔KB bridge.
+    assert "## category" in system
+    assert "## kb_knowledge" in system
 
 
 @pytest.mark.asyncio

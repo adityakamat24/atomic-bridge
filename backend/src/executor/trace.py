@@ -14,6 +14,7 @@ class TraceStep(BaseModel):
     latency_ms: int = 0
     warnings: list[str] = Field(default_factory=list)
     graph_traversal: list[str] = Field(default_factory=list)
+    target_entity: str = ""
 
 
 class ExecutionTrace(BaseModel):

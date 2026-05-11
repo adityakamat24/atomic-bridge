@@ -16,11 +16,14 @@ SNAPSHOT_PATH = Path(__file__).resolve().parent / "snapshots" / "llm_context.md"
 def test_real_schema_loads_with_expected_node_counts() -> None:
     g = load(REPO_DATA_SCHEMA)
     counts = g.counts()
-    assert counts["entities"] == 4
+    # 4 ITSM tables + 1 `category` entity that models the KB↔incident category
+    # bridge as a first-class node (the PDF explicitly names this relationship
+    # as one that should be an edge).
+    assert counts["entities"] == 5
     assert counts["value_maps"] == 2
-    # NOTE: 13-tasks.md Phase 1 says "8 relations" but the YAML in
-    # 02-schema-graph.md defines 9. We follow the YAML verbatim.
-    assert counts["relations"] == 9
+    # 9 original relations + 4 category bridge relations (incident↔category,
+    # kb_knowledge↔category, both directions).
+    assert counts["relations"] == 13
 
 
 def test_real_schema_field_counts_per_entity() -> None:
@@ -31,6 +34,7 @@ def test_real_schema_field_counts_per_entity() -> None:
         "sys_user": 6,
         "sys_user_group": 3,
         "kb_knowledge": 5,
+        "category": 2,
     }
 
 
@@ -72,10 +76,28 @@ def test_real_schema_shortest_path_incident_to_user_uses_reported_or_assigned() 
     assert path[0].id in {"incident.reportedBy", "incident.assignedTo"}
 
 
-def test_real_schema_shortest_path_kb_to_anything_returns_none() -> None:
-    """kb_knowledge has no outbound relations in the spec schema."""
+def test_real_schema_shortest_path_kb_to_incident_via_category() -> None:
+    """kb_knowledge now reaches incident through the category bridge:
+    kb_knowledge.inCategory → category → category.incidentsInCategory → incident."""
     g = load(REPO_DATA_SCHEMA)
-    assert g.shortest_relation_path("kb_knowledge", "sys_user") is None
+    path = g.shortest_relation_path("kb_knowledge", "incident")
+    assert path is not None
+    ids = [r.id for r in path]
+    assert ids == ["kb_knowledge.inCategory", "category.incidentsInCategory"]
+
+
+def test_real_schema_shortest_path_kb_to_user_via_category_and_incident() -> None:
+    """KB→user is reachable in 3 hops once the category bridge is in place:
+    kb → category → incident → user. This is a real query — 'who is affected
+    by the kind of problem this article addresses' — that the prototype
+    couldn't model before the bridge."""
+    g = load(REPO_DATA_SCHEMA)
+    path = g.shortest_relation_path("kb_knowledge", "sys_user")
+    assert path is not None
+    assert len(path) == 3
+    assert path[0].id == "kb_knowledge.inCategory"
+    assert path[1].id == "category.incidentsInCategory"
+    assert path[2].id in {"incident.reportedBy", "incident.assignedTo"}
 
 
 # ---------- to_llm_context snapshot ------------------------------------------

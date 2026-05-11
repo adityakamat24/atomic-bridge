@@ -45,6 +45,17 @@ class NameResolver:
     def _build_index(self) -> None:
         self._records = self._store.find("sys_user", filters=[], limit=10_000)
 
+    def lookup(self, sys_id: str) -> dict[str, object] | None:
+        """Return the indexed sys_user record for a sys_id, or None.
+        Used by the preprocessor to enrich resolved mentions with role-relevant
+        fields (department, location) so the planner can disambiguate things
+        like 'X's tickets' based on whether X is an end user or an IT agent.
+        """
+        for rec in self._records:
+            if str(rec.get("sys_id", "")) == sys_id:
+                return rec
+        return None
+
     def resolve(self, mention: str, top_k: int = 5) -> list[NameCandidate]:
         m = _normalize(mention)
         if not m:

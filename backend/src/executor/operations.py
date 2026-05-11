@@ -60,6 +60,7 @@ def find_handler(
         outputs_summary=f"{len(records)} {op.entity} record(s)",
         outputs_count=len(records),
         latency_ms=elapsed,
+        target_entity=op.entity,
     )
 
 
@@ -118,6 +119,7 @@ def traverse_handler(
         outputs_count=len(targets),
         latency_ms=elapsed,
         graph_traversal=[op.relation],
+        target_entity=rel.to_entity,
     )
 
 
@@ -222,6 +224,7 @@ def kb_lookup_handler(
         outputs_summary=f"{len(records)} kb article(s)",
         outputs_count=len(records),
         latency_ms=elapsed,
+        target_entity="kb_knowledge",
     )
 
 
@@ -302,6 +305,7 @@ def resolve_handler(
         latency_ms=elapsed,
         warnings=warnings,
         graph_traversal=list(dict.fromkeys(relations_used)),
+        target_entity=src_entity,
     )
 
 
