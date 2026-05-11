@@ -3,21 +3,24 @@
 import { useState } from "react";
 import type { ExecutionTrace, Intent, QueryPlan } from "@/lib/types";
 
-type Tab = "plan" | "trace";
+type Tab = "plan" | "trace" | "data";
 
 export function PlanInspector({
   plan,
   trace,
+  data,
 }: {
   plan: QueryPlan | null;
   trace: ExecutionTrace | null;
+  data?: unknown;
 }) {
   const [tab, setTab] = useState<Tab>("plan");
+  const dataCount = countData(data);
 
   if (!plan && !trace) {
     return (
       <div className="flex h-full flex-col">
-        <Header active={tab} setTab={setTab} trace={null} />
+        <Header active={tab} setTab={setTab} trace={null} dataCount={0} />
         <div className="flex flex-1 items-center justify-center p-8">
           <div className="text-center">
             <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded border border-line text-fg-4">
@@ -28,7 +31,7 @@ export function PlanInspector({
             </div>
             <div className="text-sm text-fg-3">No query yet.</div>
             <div className="mt-1 text-2xs text-fg-4">
-              The plan and execution trace will appear here.
+              The plan, execution trace, and resolved data will appear here.
             </div>
           </div>
         </div>
@@ -38,23 +41,37 @@ export function PlanInspector({
 
   return (
     <div className="flex h-full flex-col">
-      <Header active={tab} setTab={setTab} trace={trace} />
+      <Header active={tab} setTab={setTab} trace={trace} dataCount={dataCount} />
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === "plan" && <PlanView plan={plan} />}
+        {tab === "plan" && <PlanView plan={plan} trace={trace} />}
         {tab === "trace" && <TraceView trace={trace} />}
+        {tab === "data" && <DataView data={data} />}
       </div>
     </div>
   );
+}
+
+function countData(data: unknown): number {
+  if (data === null || data === undefined) return 0;
+  if (Array.isArray(data)) return data.length;
+  if (typeof data === "object") {
+    const groups = (data as Record<string, unknown>).groups;
+    if (Array.isArray(groups)) return groups.length;
+    return 1;
+  }
+  return 1;
 }
 
 function Header({
   active,
   setTab,
   trace,
+  dataCount,
 }: {
   active: Tab;
   setTab: (t: Tab) => void;
   trace: ExecutionTrace | null;
+  dataCount: number;
 }) {
   return (
     <div className="flex items-center justify-between border-b border-line bg-bg px-4 h-10">
@@ -67,6 +84,14 @@ function Header({
           {trace && trace.steps.length > 0 && (
             <span className="ml-1 font-mono text-2xs text-fg-4">
               {trace.steps.length}
+            </span>
+          )}
+        </TabButton>
+        <TabButton on={active === "data"} onClick={() => setTab("data")}>
+          Data
+          {dataCount > 0 && (
+            <span className="ml-1 font-mono text-2xs text-fg-4">
+              {dataCount}
             </span>
           )}
         </TabButton>
@@ -102,13 +127,20 @@ function TabButton({
   );
 }
 
-function PlanView({ plan }: { plan: QueryPlan | null }) {
+function PlanView({
+  plan,
+  trace,
+}: {
+  plan: QueryPlan | null;
+  trace: ExecutionTrace | null;
+}) {
   if (!plan)
     return (
       <div className="p-6 text-sm text-fg-3">
         No plan was generated for this turn.
       </div>
     );
+  const entityWalk = deriveEntityWalk(trace);
   return (
     <div className="space-y-6 px-4 py-5">
       <Field label="Intent">
@@ -119,6 +151,12 @@ function PlanView({ plan }: { plan: QueryPlan | null }) {
           </span>
         </div>
       </Field>
+
+      {entityWalk.length > 0 && (
+        <Field label="Graph path">
+          <EntityWalk entities={entityWalk} />
+        </Field>
+      )}
 
       <Field label="Reasoning">
         <p className="text-sm leading-relaxed text-fg-2">{plan.reasoning}</p>
@@ -166,6 +204,50 @@ function Field({
         {label}
       </div>
       {children}
+    </div>
+  );
+}
+
+function deriveEntityWalk(trace: ExecutionTrace | null): string[] {
+  if (!trace) return [];
+  const walk: string[] = [];
+  for (const step of trace.steps) {
+    const e = step.target_entity;
+    if (!e) continue;
+    if (walk.length === 0 || walk[walk.length - 1] !== e) {
+      walk.push(e);
+    }
+  }
+  return walk;
+}
+
+const ENTITY_LABEL: Record<string, string> = {
+  incident: "Incident",
+  sys_user: "User",
+  sys_user_group: "Team",
+  kb_knowledge: "KB Article",
+  _aggregate: "Aggregate",
+  _write_proposal: "Proposal",
+};
+
+function EntityWalk({ entities }: { entities: string[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {entities.map((e, i) => (
+        <span key={`${e}-${i}`} className="flex items-center gap-1.5">
+          {i > 0 && (
+            <span className="font-mono text-2xs text-fg-4" aria-hidden>
+              →
+            </span>
+          )}
+          <span
+            className="rounded border border-cta-line bg-cta-soft px-2 py-0.5 font-mono text-2xs text-brand"
+            title={e}
+          >
+            {ENTITY_LABEL[e] ?? e}
+          </span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -293,6 +375,139 @@ function TraceView({ trace }: { trace: ExecutionTrace | null }) {
       </ol>
     </div>
   );
+}
+
+function DataView({ data }: { data: unknown }) {
+  if (data === null || data === undefined) {
+    return (
+      <div className="p-6 text-sm text-fg-3">
+        No structured data was returned for this turn.
+      </div>
+    );
+  }
+
+  // List of records → table
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return (
+        <div className="p-6 text-sm text-fg-3">
+          Query returned 0 records.
+        </div>
+      );
+    }
+    const isRecordList = data.every(
+      (r) => r !== null && typeof r === "object" && !Array.isArray(r),
+    );
+    if (isRecordList) {
+      const rows = data as Record<string, unknown>[];
+      const cols = unionKeys(rows);
+      return (
+        <div className="px-4 py-5">
+          <div className="mb-2 font-mono text-2xs uppercase tracking-wider text-fg-4">
+            {rows.length} record{rows.length === 1 ? "" : "s"}
+          </div>
+          <div className="overflow-x-auto rounded-md border border-line bg-bg-1">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-line bg-bg-2/40">
+                  {cols.map((c) => (
+                    <th
+                      key={c}
+                      className="px-2 py-1.5 text-left font-mono text-2xs uppercase tracking-wider text-fg-3"
+                    >
+                      {c}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr
+                    key={i}
+                    className={i < rows.length - 1 ? "border-b border-line" : ""}
+                  >
+                    {cols.map((c) => (
+                      <td
+                        key={c}
+                        className="px-2 py-1.5 align-top font-mono text-2xs text-fg-2"
+                      >
+                        {renderCell(r[c])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    // Scalar list — render as ordered list
+    return (
+      <div className="px-4 py-5">
+        <ol className="space-y-1">
+          {data.map((v, i) => (
+            <li key={i} className="font-mono text-xs text-fg-2">
+              {String(v)}
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+
+  // Object (aggregate result like {"count": 2} or {"groups": [...]})
+  if (typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (Array.isArray(obj.groups)) {
+      return <DataView data={obj.groups} />;
+    }
+    return (
+      <div className="px-4 py-5">
+        <dl className="space-y-2">
+          {Object.entries(obj).map(([k, v]) => (
+            <div
+              key={k}
+              className="flex items-baseline gap-3 rounded-md border border-line bg-bg-1 px-3 py-2"
+            >
+              <dt className="font-mono text-2xs uppercase tracking-wider text-fg-4">
+                {k}
+              </dt>
+              <dd className="font-mono text-xs text-fg">{renderCell(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+  }
+
+  // Scalar
+  return (
+    <div className="p-6">
+      <div className="font-mono text-sm text-fg">{String(data)}</div>
+    </div>
+  );
+}
+
+function unionKeys(rows: Record<string, unknown>[]): string[] {
+  const seen: string[] = [];
+  const set = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r)) {
+      if (k.startsWith("_")) continue;
+      if (!set.has(k)) {
+        set.add(k);
+        seen.push(k);
+      }
+    }
+  }
+  return seen;
+}
+
+function renderCell(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
 }
 
 function IntentChip({ intent }: { intent: Intent }) {

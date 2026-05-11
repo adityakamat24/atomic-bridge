@@ -23,6 +23,7 @@ export default function HomePage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [plan, setPlan] = useState<QueryPlan | null>(null);
   const [trace, setTrace] = useState<ExecutionTrace | null>(null);
+  const [data, setData] = useState<unknown>(null);
   const [pendingProposal, setPendingProposal] = useState<WriteProposal | null>(
     null,
   );
@@ -54,6 +55,7 @@ export default function HomePage() {
       });
       setPlan(resp.plan);
       setTrace(resp.trace);
+      setData(resp.data);
       if (resp.write_proposal) setPendingProposal(resp.write_proposal);
     } catch (e) {
       const msg =
@@ -100,6 +102,7 @@ export default function HomePage() {
     setMessages([]);
     setPlan(null);
     setTrace(null);
+    setData(null);
     setPendingProposal(null);
     try {
       const s = await createSession();
@@ -170,7 +173,7 @@ export default function HomePage() {
           <MessageInput onSubmit={send} disabled={busy} />
         </section>
         <aside className="hidden min-h-0 overflow-hidden bg-bg lg:block">
-          <PlanInspector plan={plan} trace={trace} />
+          <PlanInspector plan={plan} trace={trace} data={data} />
         </aside>
       </div>
 

@@ -47,6 +47,7 @@ export interface TraceStep {
   latency_ms: number;
   warnings: string[];
   graph_traversal: string[];
+  target_entity?: string;
 }
 
 export interface ExecutionTrace {
