@@ -30,8 +30,12 @@ def load_examples(path: Path | str) -> list[FewShotExample]:
 
 
 class FewShotRetriever:
-    """Embeds the example library once at startup and returns the top-k
-    most similar examples to a query at planner-call time.
+    """Embeds the example library and returns the top-k most similar
+    examples to a query at planner-call time.
+
+    **Lazy embedding**: the example library is NOT embedded in __init__.
+    The first `select()` call triggers it. Keeps backend startup fast on
+    cold-boot platforms (Fly.io etc.).
     """
 
     def __init__(
@@ -41,14 +45,25 @@ class FewShotRetriever:
     ) -> None:
         self._examples = list(examples)
         self._client = embedding_client
-        if examples:
-            self._embeddings = embedding_client.embed([e.query for e in examples])
+        self._embeddings: np.ndarray | None = None
+
+    def _ensure_embedded(self) -> None:
+        if self._embeddings is not None:
+            return
+        if self._examples:
+            self._embeddings = self._client.embed(
+                [e.query for e in self._examples]
+            )
         else:
-            self._embeddings = np.zeros((0, embedding_client.dimension), dtype=np.float32)
+            self._embeddings = np.zeros(
+                (0, self._client.dimension), dtype=np.float32
+            )
 
     def select(self, query: str, top_k: int = 3) -> list[FewShotExample]:
         if not self._examples:
             return []
+        self._ensure_embedded()
+        assert self._embeddings is not None
         q = self._client.embed([query])
         # Inner product on already-normalised vectors == cosine similarity.
         scores = (q @ self._embeddings.T)[0]

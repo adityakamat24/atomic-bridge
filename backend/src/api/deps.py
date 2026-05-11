@@ -87,14 +87,12 @@ def build_container(
     store = InMemoryStore(graph, settings.DATA_DIR)
     print("[deps] data store ok", flush=True)
 
-    print("[deps] loading embedding model (this is the slow one on cold boot)", flush=True)
+    print("[deps] preparing embedding client (lazy: model loads on first use)", flush=True)
     emb = embedding or SentenceTransformerEmbedding(settings.EMBEDDING_MODEL)
-    print(f"[deps] embedding ok (dim={emb.dimension})", flush=True)
+    print(f"[deps] embedding ready (dim={emb.dimension})", flush=True)
 
-    print("[deps] building KB index", flush=True)
+    print("[deps] preparing KB retriever (lazy: index builds on first KB query)", flush=True)
     kb = KBRetriever(store, KBIndexer(emb))
-    kb.build_index()
-    print(f"[deps] KB index ok (size={kb.size})", flush=True)
 
     print("[deps] instantiating LLM clients", flush=True)
     pllm = planner_llm or make_llm_client("planner", settings)

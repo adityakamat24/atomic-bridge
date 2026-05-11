@@ -17,9 +17,11 @@ primary_region = "ord"
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = true
+  # Keep one machine warm so the demo never cold-boots in front of a reviewer.
+  # Switch back to scale-to-zero after the take-home is reviewed.
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   [http_service.concurrency]
     type = "requests"

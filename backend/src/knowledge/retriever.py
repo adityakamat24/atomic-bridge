@@ -51,9 +51,11 @@ class KBRetriever:
         """Returns up to `top_k` article records, each with an extra
         `_score` float (cosine similarity, higher = better). Empty list if
         nothing matched.
+
+        Auto-builds the index on first call (lazy). Subsequent calls reuse it.
         """
         if not self._built:
-            raise RuntimeError("KBRetriever.build_index() must be called before search()")
+            self.build_index()
         hits = self._indexer.search(query, top_k=top_k, category_hint=category_hint)
         out: list[Article] = []
         for rec, score in hits:

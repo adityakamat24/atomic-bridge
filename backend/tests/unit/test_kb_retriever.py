@@ -132,12 +132,17 @@ def test_indexer_returns_top_k(
 # ---------- Retriever logic (no semantic dependence) ------------------------
 
 
-def test_search_before_build_raises(
+def test_search_auto_builds_index_on_first_call(
     store: InMemoryStore, fake_embedder: EmbeddingClient
 ) -> None:
+    """Lazy build: search() triggers build_index() if it hasn't been called yet.
+    Lets the FastAPI lifespan return instantly while still serving the first
+    KB query correctly (just slower)."""
     r = KBRetriever(store, KBIndexer(fake_embedder))
-    with pytest.raises(RuntimeError):
-        r.search("anything")
+    assert not r.is_ready
+    out = r.search("vpn")
+    assert r.is_ready
+    assert isinstance(out, list)
 
 
 def test_build_index_publishes_only_published(
