@@ -4,8 +4,22 @@ import type {
   SessionCreateResponse,
 } from "./types";
 
+/**
+ * All client traffic goes through `/api/proxy/...` (the Next.js route in
+ * `app/api/proxy/[...path]/route.ts`). That route forwards to the real
+ * backend server-side, so the browser never has to resolve the Fly hostname
+ * — Vercel's edge does it for us.
+ *
+ * Local dev: `npm run dev` proxies through itself too. The Next.js route
+ * reads the `API_BASE` env var server-side (no NEXT_PUBLIC prefix) and
+ * defaults to `http://localhost:8000` if unset.
+ *
+ * Override only if you want to bypass the proxy for some reason — e.g.
+ * to point straight at a backend running on a different host while the
+ * frontend is on localhost. Most users should leave it alone.
+ */
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE ?? "/api/proxy";
 
 export class ApiError extends Error {
   status: number;
