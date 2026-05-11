@@ -122,9 +122,13 @@ async def test_ambiguous_plan_parses_with_no_ops(
 
 
 @pytest.mark.asyncio
-async def test_prompt_includes_schema_subgraph_and_examples(
+async def test_prompt_subgraph_filter_expands_along_relations(
     generator: tuple[PlanGenerator, AsyncMock],
 ) -> None:
+    """With a seed of just `incident`, 2-hop expansion must pull in
+    `sys_user` (via reportedBy/assignedTo) and `sys_user_group` (via
+    handledBy) so the planner can emit traversal ops. `kb_knowledge` has no
+    relations defined and must stay filtered out."""
     gen, tool_call = generator
     tool_call.return_value = {
         "intent": "lookup",
@@ -137,8 +141,32 @@ async def test_prompt_includes_schema_subgraph_and_examples(
     system = tool_call.call_args.kwargs["system"]
     assert "## incident" in system
     assert "Plan (JSON)" in system  # few-shot block present
-    # Subgraph filter respected
+    # Related entities pulled in by the BFS expansion:
+    assert "## sys_user" in system
+    assert "## sys_user_group" in system
+    # Unrelated entity stays filtered out:
+    assert "## kb_knowledge" not in system
+
+
+@pytest.mark.asyncio
+async def test_prompt_subgraph_hops_zero_disables_expansion(
+    generator: tuple[PlanGenerator, AsyncMock],
+) -> None:
+    """With subgraph_hops=0 the planner sees exactly the seed entities."""
+    gen, tool_call = generator
+    gen._subgraph_hops = 0  # type: ignore[attr-defined]
+    tool_call.return_value = {
+        "intent": "lookup",
+        "reasoning": "x" * 12,
+        "operations": [{"op": "find", "id": "x", "entity": "incident"}],
+        "output_spec": {"format": "list", "final_var": "x"},
+        "confidence": 0.9,
+    }
+    await gen.generate("vpn", "vpn", [], subgraph_ids=["incident"])
+    system = tool_call.call_args.kwargs["system"]
+    assert "## incident" in system
     assert "## sys_user_group" not in system
+    assert "## sys_user" not in system
 
 
 @pytest.mark.asyncio

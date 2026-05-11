@@ -188,6 +188,40 @@ class SchemaGraph:
     def relations_to(self, entity_id: str) -> list[Relation]:
         return [r for r in self._relations.values() if r.to_entity == entity_id]
 
+    def expand_subgraph(
+        self, seed_ids: list[str], max_hops: int = 2
+    ) -> list[str]:
+        """BFS over the relation graph starting from `seed_ids`. Returns every
+        entity reachable within `max_hops` (inclusive), in BFS order, with seeds
+        first. Used to compensate for an imperfect subgraph hint from the
+        preprocessor: if it returns `[sys_user]` but the query needs to traverse
+        to `incident`, the planner still needs `incident` in its context.
+
+        Both directions of the relation graph count as one hop — production
+        graphs frequently have asymmetric relation pairs (only the outbound
+        side defined), so following inbound edges is necessary for the filter
+        to be safe at scale.
+        """
+        out: dict[str, int] = {}
+        queue: deque[tuple[str, int]] = deque()
+        for sid in seed_ids:
+            if sid in self._entities and sid not in out:
+                out[sid] = 0
+                queue.append((sid, 0))
+        while queue:
+            eid, depth = queue.popleft()
+            if depth >= max_hops:
+                continue
+            for rel in self.relations_from(eid):
+                if rel.to_entity not in out:
+                    out[rel.to_entity] = depth + 1
+                    queue.append((rel.to_entity, depth + 1))
+            for rel in self.relations_to(eid):
+                if rel.from_entity not in out:
+                    out[rel.from_entity] = depth + 1
+                    queue.append((rel.from_entity, depth + 1))
+        return list(out.keys())
+
     def shortest_relation_path(
         self, from_entity: str, to_entity: str
     ) -> list[Relation] | None:

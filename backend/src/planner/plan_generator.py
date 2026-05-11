@@ -31,12 +31,14 @@ class PlanGenerator:
         few_shot: FewShotRetriever,
         prompt_path: Path = PROMPT_PATH,
         few_shot_k: int = 3,
+        subgraph_hops: int = 2,
     ) -> None:
         self._llm = llm
         self._graph = graph
         self._few_shot = few_shot
         self._template = prompt_path.read_text(encoding="utf-8")
         self._few_shot_k = few_shot_k
+        self._subgraph_hops = subgraph_hops
 
     async def generate(
         self,
@@ -45,9 +47,18 @@ class PlanGenerator:
         resolved_entities: list[EntityMention],
         subgraph_ids: list[str] | None = None,
     ) -> QueryPlan:
+        # Transitively expand the preprocessor's subgraph hint along the
+        # relation graph so the planner always sees entities reachable through
+        # a traversal, even when the preprocessor didn't name them explicitly.
+        # See 03-planner.md §subgraph-filtering.
+        expanded: list[str] | None = None
+        if subgraph_ids:
+            expanded = self._graph.expand_subgraph(
+                subgraph_ids, max_hops=self._subgraph_hops
+            )
         examples = self._few_shot.select(rewritten_query, top_k=self._few_shot_k)
         system = self._template.format(
-            schema_subgraph=self._graph.to_llm_context(subgraph_ids or None),
+            schema_subgraph=self._graph.to_llm_context(expanded),
             resolved_entities=_format_entities(resolved_entities),
             question=question,
             rewritten=rewritten_query,

@@ -150,11 +150,36 @@ def aggregate_handler(
     elif op.operation in ("group_by_count", "top_n"):
         key = op.group_by_field or ""
         counts = Counter(r.get(key) for r in source if isinstance(r, dict))
-        groups = [
-            {"key": k, "count": v}
-            for k, v in counts.most_common()
-            if k is not None
-        ]
+        # Resolve sys_id keys to display names and value-map codes to labels so
+        # the response generator never sees `grp_cloud` or `2`. The raw key is
+        # preserved as `key_raw` when a translation happens, for audit/debug.
+        src_var = op.source.lstrip("$")
+        src_entity = ctx.var_entity.get(src_var, "")
+        field = None
+        if key and src_entity:
+            field_id = key if "." in key else f"{src_entity}.{key}"
+            if graph.has_field(field_id):
+                field = graph.field(field_id)
+        groups: list[dict[str, Any]] = []
+        for raw_key, count in counts.most_common():
+            if raw_key is None:
+                continue
+            display_key: Any = raw_key
+            translated = False
+            if field is not None:
+                if field.data_type == "reference" and field.references:
+                    display_key = resolver.display_name_of(
+                        field.references, str(raw_key)
+                    )
+                    translated = True
+                elif field.value_map_id is not None and isinstance(raw_key, int):
+                    vm = graph.value_map(field.value_map_id)
+                    display_key = vm.forward.get(raw_key, raw_key)
+                    translated = raw_key in vm.forward
+            entry: dict[str, Any] = {"key": display_key, "count": count}
+            if translated:
+                entry["key_raw"] = raw_key
+            groups.append(entry)
         if op.operation == "top_n" and op.n:
             groups = groups[: op.n]
         result = {"groups": groups}

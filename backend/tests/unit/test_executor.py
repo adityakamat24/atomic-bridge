@@ -229,6 +229,71 @@ def test_group_by_count_per_category(
     groups = result.output["groups"]
     keys = {g["key"] for g in groups}
     assert {"Network", "Software"} <= keys
+    # Plain-string field: no translation, no `key_raw` echoed.
+    assert all("key_raw" not in g for g in groups)
+
+
+def test_group_by_count_on_reference_field_resolves_display_names(
+    engine: ExecutionEngine, isolated_data_dir: Path
+) -> None:
+    """Grouping by `assignment_group` must surface 'Cloud Infrastructure',
+    not the raw sys_id 'grp_cloud'. Raw key preserved as `key_raw`."""
+    g = load(isolated_data_dir / "schema.yaml")
+    plan = QueryPlan(
+        intent="analytical",
+        reasoning="workload per team",
+        operations=[
+            FindOp(id="x", entity="incident"),
+            AggregateOp(
+                id="g",
+                source="$x",
+                operation="top_n",
+                group_by_field="assignment_group",
+                n=5,
+            ),
+        ],
+        output_spec=OutputSpec(format="scalar", final_var="g"),
+        confidence=0.9,
+    )
+    plan = _validate(g, plan)
+    result = engine.execute(plan)
+    groups = result.output["groups"]
+    keys = {grp["key"] for grp in groups}
+    raw_keys = {grp["key_raw"] for grp in groups if "key_raw" in grp}
+    # Display names surface as the primary key.
+    assert "Cloud Infrastructure" in keys or "Desktop Support" in keys
+    # No sys_id-shaped strings leak as the primary `key`.
+    assert not any(isinstance(k, str) and k.startswith("grp_") for k in keys)
+    # Raw sys_id is preserved for audit on every translated entry.
+    assert any(rk.startswith("grp_") for rk in raw_keys)
+
+
+def test_group_by_count_on_value_mapped_field_resolves_labels(
+    engine: ExecutionEngine, isolated_data_dir: Path
+) -> None:
+    """Grouping by `priority` must surface 'High'/'Critical', not 1/2."""
+    g = load(isolated_data_dir / "schema.yaml")
+    plan = QueryPlan(
+        intent="analytical",
+        reasoning="incidents per priority",
+        operations=[
+            FindOp(id="x", entity="incident"),
+            AggregateOp(
+                id="g",
+                source="$x",
+                operation="group_by_count",
+                group_by_field="priority",
+            ),
+        ],
+        output_spec=OutputSpec(format="scalar", final_var="g"),
+        confidence=0.9,
+    )
+    plan = _validate(g, plan)
+    result = engine.execute(plan)
+    groups = result.output["groups"]
+    keys = {grp["key"] for grp in groups}
+    assert keys & {"Critical", "High", "Medium", "Low", "Planning"}
+    assert not any(isinstance(k, int) for k in keys)
 
 
 # ---------- Resolve handler -------------------------------------------------

@@ -197,6 +197,67 @@ def test_shortest_relation_path_unknown_entity_returns_none() -> None:
     assert g.shortest_relation_path("ticket", "ghost") is None
 
 
+# ---------- expand_subgraph -------------------------------------------------
+
+
+def test_expand_subgraph_zero_hops_returns_only_seed() -> None:
+    g = _build_minimal()
+    assert g.expand_subgraph(["ticket"], max_hops=0) == ["ticket"]
+
+
+def test_expand_subgraph_follows_outbound_relations() -> None:
+    g = _build_minimal()
+    out = g.expand_subgraph(["ticket"], max_hops=1)
+    assert set(out) == {"ticket", "agent"}
+
+
+def test_expand_subgraph_follows_inbound_relations() -> None:
+    """Seed `agent`, expansion must reach `ticket` through the inbound
+    `ticket.assignedTo` relation even when no outbound relation is defined.
+    Production schemas frequently omit one side of an inverse pair, so
+    inbound-following is what makes the filter safe at scale."""
+    g = SchemaGraph()
+    g.add_entity(
+        Entity(id="ticket", display_name="T", table_name="ticket", data_path="t.json")
+    )
+    g.add_entity(
+        Entity(id="agent", display_name="A", table_name="agent", data_path="a.json")
+    )
+    g.add_field(
+        FieldNode(
+            id="ticket.assigned_to",
+            entity_id="ticket",
+            name="assigned_to",
+            display_name="Assignee",
+            data_type="reference",
+            references="agent",
+        )
+    )
+    g.add_relation(
+        Relation(
+            id="ticket.assignedTo",
+            verb_phrase="assigned to",
+            from_entity="ticket",
+            to_entity="agent",
+            via_field="ticket.assigned_to",
+            cardinality="many_to_one",
+        )
+    )
+    out = g.expand_subgraph(["agent"], max_hops=1)
+    assert set(out) == {"agent", "ticket"}
+
+
+def test_expand_subgraph_ignores_unknown_seeds() -> None:
+    g = _build_minimal()
+    assert g.expand_subgraph(["ghost"], max_hops=2) == []
+
+
+def test_expand_subgraph_preserves_seed_order() -> None:
+    g = _build_minimal()
+    out = g.expand_subgraph(["agent", "ticket"], max_hops=0)
+    assert out == ["agent", "ticket"]
+
+
 # ---------- counts and integrity ---------------------------------------------
 
 
