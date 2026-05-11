@@ -49,21 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not hasattr(app.state, "container") or app.state.container is None:
         app.state.container = build_container(settings)
 
-    # Mount the MCP SSE server on the same FastAPI app at /mcp. Sharing the
-    # AppContainer means MCP tool calls and chat queries see the same
-    # in-memory state (sessions, approvals, mutations to incidents.json).
-    # Skip if a test container is already attached (tests don't need MCP).
-    if not getattr(app.state, "_mcp_mounted", False):
-        try:
-            from src.mcp_server.server import build_server
-
-            mcp_server = build_server(app.state.container)
-            app.mount("/mcp", mcp_server.sse_app())
-            app.state._mcp_mounted = True
-            print("[mcp] mounted at /mcp/sse", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            # MCP failure shouldn't block the API. Log and continue.
-            print(f"[mcp] mount FAILED (non-fatal): {exc!r}", flush=True)
+    # MCP runs as a separate process on port 8001 (see scripts/start.sh).
+    # Mounting FastMCP's sse_app on a sub-path behind a proxy returns
+    # "Invalid Host header" — keep the two cleanly separated instead.
 
     # Kick off warm-up in the background — does NOT block lifespan,
     # so health checks pass within a couple of seconds even if the model
