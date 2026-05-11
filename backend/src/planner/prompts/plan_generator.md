@@ -58,6 +58,19 @@ For questions like "incidents from Engineering people", traverse via Relations. 
 
 The Status (state) field has values: New, In Progress, On Hold, Resolved, Closed. "Open" means state NOT IN ("Resolved", "Closed"). Use operator=`in` with `state IN ("New", "In Progress", "On Hold")`.
 
+## "High-priority" semantics
+
+When the user says "high-priority", "high priority", or "important", they usually mean **Critical AND High** together (priority IN ("Critical", "High")), not just High in isolation. Critical is a more severe form of high. Only filter to a single value if the user is explicit (e.g. "exactly priority High" or "Critical only").
+
+The Priority field has values: Critical, High, Medium, Low, Planning.
+
+## "X's tickets" / "X's incidents" — caller vs. assignee
+
+When the user references incidents that "belong to" a person:
+- **"X's tickets"**, **"tickets X raised"**, **"issues X reported"** → caller. Traverse `sys_user.incidentsReported`.
+- **"What X is working on"**, **"X's assignments"**, **"tickets assigned to X"** → assignee. Traverse `sys_user.incidentsAssigned`.
+- **"X's incidents"** without qualifier → ambiguous; default to caller (incidentsReported), since the most common natural reading is "the incidents X raised".
+
 ## "X's team" — disambiguating informal team membership
 
 The schema has no formal user→team membership field. When a query mentions "X's team":

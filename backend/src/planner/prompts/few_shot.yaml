@@ -46,6 +46,18 @@ examples:
       output_spec: {format: list, final_var: out, max_items_shown: 20}
       confidence: 0.92
 
+  - query: "Who reports to Alex Morgan?"
+    intent_hint: "lookup; reverse manager relation (sys_user.manages, NOT managedBy)"
+    plan:
+      intent: lookup
+      reasoning: "'Reports to X' asks for X's direct reports — the inverse of the manager relation. Find Alex, traverse sys_user.manages (one_to_many) to get the users whose manager is Alex, then resolve their names and departments."
+      operations:
+        - {op: find, id: alex, entity: sys_user, filters: [{field: name, operator: eq, value: "Alex Morgan"}]}
+        - {op: traverse, id: directs, from: $alex, relation: sys_user.manages}
+        - {op: resolve, id: out, source: $directs, fields: [name, department, location]}
+      output_spec: {format: list, final_var: out, max_items_shown: 20}
+      confidence: 0.92
+
   - query: "What open issues does Ravi Kumar's team currently have assigned to them?"
     intent_hint: "cross_reference; resolve 'X's team' via assignment_groups of incidents X is assigned to (NOT via group.manager — that field means 'manager OF the group', not 'group X manages')"
     plan:
