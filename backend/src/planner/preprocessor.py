@@ -140,10 +140,16 @@ class Preprocessor:
         return out
 
     def _enrich_user_mentions(self, out: PreprocessorOutput) -> None:
-        """Attach role-relevant fields (department, location) to each
-        resolved sys_user mention. Lets the planner pick the right relation
-        for phrases like 'X's tickets' — end users are callers, IT agents
-        are assignees."""
+        """Attach role-relevant fields to each resolved sys_user mention.
+        The planner uses these to pick the right relation for ambiguous
+        phrases:
+        - `department` + `location`: end-user (Engineering, Marketing, …) vs
+          IT agent (IT Support, Facilities) for 'X's tickets'.
+        - `direct_reports` + `groups_managed`: signals that X is a manager,
+          which changes the meaning of 'X's team'. A user who manages groups
+          owns those groups' workload — 'X's team is handling' should walk
+          `sys_user.managesGroups` rather than X's own ticket queue.
+        """
         for m in out.entity_mentions:
             if m.entity_type != "sys_user" or not m.resolved_sys_id:
                 continue
@@ -153,6 +159,13 @@ class Preprocessor:
             for key in ("department", "location"):
                 if key in rec and rec[key] is not None:
                     m.details[key] = rec[key]
+            sys_id = m.resolved_sys_id
+            reports = self._name_resolver.direct_reports_count(sys_id)
+            groups = self._name_resolver.groups_managed_count(sys_id)
+            if reports:
+                m.details["direct_reports"] = reports
+            if groups:
+                m.details["groups_managed"] = groups
 
     def _format_candidates(self, query: str) -> str:
         # Cheap heuristic: try every capitalised token & every two-token

@@ -72,6 +72,19 @@ examples:
       output_spec: {format: list, final_var: out, max_items_shown: 20}
       confidence: 0.85
 
+  - query: "What issues is Deepak Sharma's team handling?"
+    intent_hint: "cross_reference; Deepak is a manager (resolved entity will show groups_managed > 0). 'His team's incidents' means the incidents handled by groups he manages — NOT incidents assigned to him personally (managers don't carry assignments)."
+    plan:
+      intent: cross_reference
+      reasoning: "Deepak Sharma manages assignment groups (resolved details include groups_managed). 'His team is handling' means incidents handled by those groups. Hop chain: user -> sys_user.managesGroups -> group -> sys_user_group.incidentsHandled -> incident."
+      operations:
+        - {op: find, id: mgr, entity: sys_user, filters: [{field: name, operator: eq, value: "Deepak Sharma"}]}
+        - {op: traverse, id: teams, from: $mgr, relation: sys_user.managesGroups}
+        - {op: traverse, id: tickets, from: $teams, relation: sys_user_group.incidentsHandled}
+        - {op: resolve, id: out, source: $tickets, fields: [number, short_description, state, priority, category], include_relations: [assignedTo, handledBy]}
+      output_spec: {format: list, final_var: out, max_items_shown: 20}
+      confidence: 0.9
+
   - query: "Show me the team that handles Ravi Kumar's tickets"
     intent_hint: "cross_reference; the verb 'handles' (or 'works on', 'is responsible for') flips 'X's tickets' from caller to assignee. IT-support users are agents who handle tickets, not raise them — falling back to the caller chain returns 0 results."
     plan:

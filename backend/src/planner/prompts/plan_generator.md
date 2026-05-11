@@ -77,10 +77,15 @@ When the user references incidents that "belong to" a person, the right relation
 
 ## "X's team" — disambiguating informal team membership
 
-The schema has no formal user→team membership field. When a query mentions "X's team":
-- The `manager` field on a group means "the manager OF the group" — NOT "the group X manages". Do not use `group.manager == X.sys_id` to find X's team unless the query explicitly says "the team X manages" or "X's direct reports".
-- The natural reading of "Ravi's team" / "Sarah's team" is "the assignment_group(s) X works on", which we infer from the incidents X is currently assigned to. Hop chain: user → `sys_user.incidentsAssigned` → `incident.handledBy` → group → (then traverse `sys_user_group.incidentsHandled` for downstream filters).
-- If the query also includes "department-level" wording (e.g. "Engineering folks"), filter users by `department` instead.
+The schema has no formal user→team membership field. When a query mentions "X's team", look at the resolved entity's `details` block to pick the right interpretation:
+
+- **If `details.groups_managed > 0`** → X is a team manager. "X's team" means *the assignment_groups X manages*. Traverse `sys_user.managesGroups` → group. For "what X's team is handling/working on": continue with `sys_user_group.incidentsHandled` → incidents.
+- **Elif `details.direct_reports > 0` and `groups_managed` is absent** → X manages people but no groups. "X's team" means *X's direct reports*. Traverse `sys_user.manages` → users.
+- **Else (X is staff)** → "X's team" means *the assignment_group(s) X works on*, which we infer from incidents X is currently assigned to. Hop chain: user → `sys_user.incidentsAssigned` → `incident.handledBy` → group → (then traverse `sys_user_group.incidentsHandled` for downstream filters).
+
+Other guidance:
+- The `manager` field on a group means "the manager OF the group" — NOT "the group X manages". `sys_user.managesGroups` is the correct relation for the reverse direction.
+- If the query mentions "department-level" wording (e.g. "Engineering folks"), filter users by `department` instead.
 
 ## Confidence
 

@@ -56,6 +56,20 @@ class NameResolver:
                 return rec
         return None
 
+    def direct_reports_count(self, manager_sys_id: str) -> int:
+        """How many users report to this user. Used by the preprocessor to
+        signal management role to the planner."""
+        return sum(
+            1 for rec in self._records if rec.get("manager") == manager_sys_id
+        )
+
+    def groups_managed_count(self, manager_sys_id: str) -> int:
+        """How many assignment groups this user manages. A non-zero count
+        signals that 'X's team' should be resolved through `sys_user.managesGroups`
+        rather than through X's own ticket assignments."""
+        groups = self._store.find("sys_user_group", filters=[], limit=10_000)
+        return sum(1 for g in groups if g.get("manager") == manager_sys_id)
+
     def resolve(self, mention: str, top_k: int = 5) -> list[NameCandidate]:
         m = _normalize(mention)
         if not m:

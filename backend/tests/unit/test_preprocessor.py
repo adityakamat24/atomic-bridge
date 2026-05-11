@@ -86,6 +86,61 @@ async def test_user_mention_enriched_with_department(
 
 
 @pytest.mark.asyncio
+async def test_user_mention_surfaces_management_signals(
+    preprocessor: tuple[Preprocessor, AsyncMock],
+) -> None:
+    """Deepak Sharma manages 3 users AND 5 groups — both signals must reach
+    the planner so 'Deepak's team is handling X' routes through
+    `sys_user.managesGroups` instead of his own (empty) ticket queue."""
+    pre, tool_call = preprocessor
+    tool_call.return_value = {
+        "intent": "cross_reference",
+        "rewritten_query": "What issues is Deepak Sharma's team handling?",
+        "entity_mentions": [
+            {
+                "surface": "Deepak Sharma",
+                "entity_type": "sys_user",
+                "resolved_sys_id": "usr010",
+                "candidates": ["usr010"],
+            }
+        ],
+        "relevant_entities": ["sys_user", "sys_user_group", "incident"],
+        "notes": "",
+    }
+    out = await pre.process("What issues is Deepak Sharma's team handling?")
+    details = out.entity_mentions[0].details
+    assert details.get("direct_reports") == 3
+    assert details.get("groups_managed") == 5
+
+
+@pytest.mark.asyncio
+async def test_people_manager_without_groups_signal(
+    preprocessor: tuple[Preprocessor, AsyncMock],
+) -> None:
+    """Alex Morgan manages 5 users but 0 groups — `groups_managed` must NOT
+    appear, so the planner falls back to `sys_user.manages` for 'Alex's team'."""
+    pre, tool_call = preprocessor
+    tool_call.return_value = {
+        "intent": "cross_reference",
+        "rewritten_query": "Show me Alex Morgan's team",
+        "entity_mentions": [
+            {
+                "surface": "Alex Morgan",
+                "entity_type": "sys_user",
+                "resolved_sys_id": "usr009",
+                "candidates": ["usr009"],
+            }
+        ],
+        "relevant_entities": ["sys_user"],
+        "notes": "",
+    }
+    out = await pre.process("Show me Alex Morgan's team")
+    details = out.entity_mentions[0].details
+    assert details.get("direct_reports") == 5
+    assert "groups_managed" not in details
+
+
+@pytest.mark.asyncio
 async def test_non_user_mention_not_enriched(
     preprocessor: tuple[Preprocessor, AsyncMock],
 ) -> None:
