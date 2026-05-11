@@ -159,7 +159,7 @@ A few items, ranked by what would move the needle most.
 
 ---
 
-# Resilience and engineering details
+# Fallbacks and limits
 
 **Cross-provider LLM fallback.** Every LLM client is wrapped in a `FallbackLLMClient` when both API keys are set. The primary provider (Anthropic by default) runs first. On a terminal failure after its retry loop is exhausted (the OpenAI API has a 12-minute outage, Anthropic is silently dropping requests, etc.), the secondary provider runs the same call once. `LLMToolCallMissingError` is explicitly *not* failed over because it signals a planner-prompt bug rather than a provider issue, and switching models would mask the real cause. Toggle with `LLM_ENABLE_FALLBACK`. See `backend/src/llm/fallback.py` and the four tests in `test_llm.py` under "Fallback wrapping".
 
