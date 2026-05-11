@@ -20,6 +20,7 @@ Outbound relations:
 - reportedBy: incident reported by sys_user (cardinality many_to_one)
 - assignedTo: incident assigned to sys_user (cardinality many_to_one)
 - handledBy: incident handled by team sys_user_group (cardinality many_to_one)
+- inCategory: incident in category category (cardinality many_to_one)
 
 ## sys_user (User)
 An employee or external user of the IT system
@@ -59,3 +60,17 @@ Fields:
 - text (Body, string)
 - kb_category (Category, string)
 - workflow_state (Publication Status, string)
+
+Outbound relations:
+- inCategory: kb_knowledge in category category (cardinality many_to_one)
+
+## category (Category)
+A functional bucket that both incidents and KB articles belong to. The shared category value is the bridge that links a problem to its remediation playbook.
+
+Fields:
+- name (Category Name, string): Human-readable category label, also used as the primary key (e.g., 'Network', 'Software'). The category string on incidents and KB articles matches this name.
+- description (Description, string): What kinds of issues fall under this category.
+
+Outbound relations:
+- incidentsInCategory: category has incidents incident (cardinality one_to_many)
+- kbArticlesInCategory: category has articles kb_knowledge (cardinality one_to_many)

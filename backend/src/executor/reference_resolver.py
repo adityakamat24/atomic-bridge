@@ -39,6 +39,8 @@ class ReferenceResolver:
             return str(rec.get("number", f"Incident {sys_id}"))
         if entity == "kb_knowledge":
             return str(rec.get("number", f"Article {sys_id}"))
+        if entity == "category":
+            return str(rec.get("name", sys_id))
         return f"[{entity} {sys_id}]"
 
     def cache_size(self) -> int:

@@ -21,7 +21,8 @@ def test_health_ready_returns_kb_size(client: TestClient) -> None:
     body = r.json()
     assert body["status"] == "ready"
     assert body["kb_size"] == 5
-    assert body["schema_entities"] == 4
+    # 4 ITSM tables + the `category` entity that bridges KB articles to incidents.
+    assert body["schema_entities"] == 5
 
 
 # ---------- Schema endpoint ----------------------------------------------
@@ -31,8 +32,9 @@ def test_schema_endpoint_returns_counts(client: TestClient) -> None:
     r = client.get("/v1/schema")
     assert r.status_code == 200
     body = r.json()
-    assert body["counts"]["entities"] == 4
-    assert body["counts"]["relations"] == 9
+    assert body["counts"]["entities"] == 5
+    # 9 original + 4 category bridge relations.
+    assert body["counts"]["relations"] == 13
 
 
 def test_schema_visjs_endpoint(client: TestClient) -> None:

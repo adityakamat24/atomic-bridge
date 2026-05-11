@@ -146,6 +146,22 @@ entities:
         display_name: "Publication Status"
         data_type: string
 
+  - id: category
+    display_name: "Category"
+    description: "A functional bucket that both incidents and KB articles belong to. The shared category value is the bridge that links a problem to its remediation playbook."
+    primary_key: sys_id
+    table_name: category
+    data_path: categories.json
+    fields:
+      - name: name
+        display_name: "Category Name"
+        description: "Human-readable category label, also used as the primary key (e.g., 'Network', 'Software'). The category string on incidents and KB articles matches this name."
+        data_type: string
+      - name: description
+        display_name: "Description"
+        description: "What kinds of issues fall under this category."
+        data_type: string
+
 relations:
   - id: incident.reportedBy
     verb_phrase: "reported by"
@@ -236,3 +252,43 @@ relations:
     cardinality: many_to_one
     inverse_relation_id: sys_user.managesGroups
     description: "Identifies the manager of this team"
+
+  - id: incident.inCategory
+    verb_phrase: "in category"
+    inverse_verb_phrase: "incidents in category"
+    from_entity: incident
+    to_entity: category
+    via_field: incident.category
+    cardinality: many_to_one
+    inverse_relation_id: category.incidentsInCategory
+    description: "The functional bucket this incident belongs to. The string value of incident.category is the sys_id of the matching category record."
+
+  - id: category.incidentsInCategory
+    verb_phrase: "has incidents"
+    inverse_verb_phrase: "category of incident"
+    from_entity: category
+    to_entity: incident
+    via_field: incident.category
+    cardinality: one_to_many
+    inverse_relation_id: incident.inCategory
+    description: "All incidents that fall under this category."
+
+  - id: kb_knowledge.inCategory
+    verb_phrase: "in category"
+    inverse_verb_phrase: "articles in category"
+    from_entity: kb_knowledge
+    to_entity: category
+    via_field: kb_knowledge.kb_category
+    cardinality: many_to_one
+    inverse_relation_id: category.kbArticlesInCategory
+    description: "The functional bucket this KB article belongs to. The string value of kb_knowledge.kb_category is the sys_id of the matching category record."
+
+  - id: category.kbArticlesInCategory
+    verb_phrase: "has articles"
+    inverse_verb_phrase: "category of article"
+    from_entity: category
+    to_entity: kb_knowledge
+    via_field: kb_knowledge.kb_category
+    cardinality: one_to_many
+    inverse_relation_id: kb_knowledge.inCategory
+    description: "All published KB articles whose category matches. This is the documented bridge between problem (incident) and remediation (KB)."

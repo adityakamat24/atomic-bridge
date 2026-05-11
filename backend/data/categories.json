@@ -1,0 +1,27 @@
+[
+  {
+    "sys_id": "Network",
+    "name": "Network",
+    "description": "Connectivity, VPN, switching, DNS, and other network-layer issues."
+  },
+  {
+    "sys_id": "Software",
+    "name": "Software",
+    "description": "Desktop and SaaS applications: Outlook, Office 365, browser issues."
+  },
+  {
+    "sys_id": "Hardware",
+    "name": "Hardware",
+    "description": "Laptops, peripherals, monitors, and other physical devices."
+  },
+  {
+    "sys_id": "Facilities",
+    "name": "Facilities",
+    "description": "Badges, building access, office equipment, physical-plant issues."
+  },
+  {
+    "sys_id": "Cloud Services",
+    "name": "Cloud Services",
+    "description": "SharePoint, shared drives, cloud-hosted services and SaaS infrastructure."
+  }
+]
