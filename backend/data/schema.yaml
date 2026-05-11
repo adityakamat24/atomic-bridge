@@ -1,0 +1,238 @@
+value_maps:
+  - id: incident_state
+    description: "Maps incident state codes to human-readable status"
+    forward:
+      1: "New"
+      2: "In Progress"
+      3: "On Hold"
+      4: "Resolved"
+      5: "Closed"
+
+  - id: incident_priority
+    description: "Maps incident priority codes to severity labels"
+    forward:
+      1: "Critical"
+      2: "High"
+      3: "Medium"
+      4: "Low"
+      5: "Planning"
+
+entities:
+  - id: incident
+    display_name: "Incident"
+    description: "An IT support ticket reporting a problem or service disruption"
+    primary_key: sys_id
+    table_name: incident
+    data_path: incidents.json
+    fields:
+      - name: number
+        display_name: "Ticket Number"
+        description: "Human-friendly ticket identifier, e.g., INC0012345"
+        data_type: string
+      - name: short_description
+        display_name: "Summary"
+        description: "One-line summary of the issue"
+        data_type: string
+      - name: description
+        display_name: "Description"
+        description: "Full description of the issue from the reporter"
+        data_type: string
+      - name: state
+        display_name: "Status"
+        description: "Current state of the incident"
+        data_type: integer
+        value_map: incident_state
+      - name: priority
+        display_name: "Priority"
+        description: "Severity level"
+        data_type: integer
+        value_map: incident_priority
+      - name: category
+        display_name: "Category"
+        description: "Functional category, e.g., Network, Software, Hardware"
+        data_type: string
+      - name: caller_id
+        display_name: "Reporter (sys_id)"
+        description: "Reference to the user who reported the incident"
+        data_type: reference
+        references: sys_user
+      - name: assigned_to
+        display_name: "Assignee (sys_id)"
+        description: "Reference to the user currently working on the incident"
+        data_type: reference
+        references: sys_user
+      - name: assignment_group
+        display_name: "Assigned Team (sys_id)"
+        description: "Reference to the team responsible for the incident"
+        data_type: reference
+        references: sys_user_group
+      - name: sys_created_on
+        display_name: "Created"
+        description: "Timestamp the incident was created"
+        data_type: datetime
+      - name: sys_updated_on
+        display_name: "Last Updated"
+        description: "Timestamp of the most recent change"
+        data_type: datetime
+
+  - id: sys_user
+    display_name: "User"
+    description: "An employee or external user of the IT system"
+    primary_key: sys_id
+    table_name: sys_user
+    data_path: users.json
+    fields:
+      - name: email
+        display_name: "Email"
+        description: "Corporate email address"
+        data_type: string
+        is_sensitive: true
+      - name: name
+        display_name: "Full Name"
+        data_type: string
+      - name: department
+        display_name: "Department"
+        data_type: string
+      - name: location
+        display_name: "Location"
+        data_type: string
+      - name: manager
+        display_name: "Manager (sys_id)"
+        description: "Reference to this user's manager"
+        data_type: reference
+        references: sys_user
+      - name: active
+        display_name: "Active"
+        data_type: boolean
+
+  - id: sys_user_group
+    display_name: "Assignment Group"
+    description: "A team of IT staff that handles a category of incidents"
+    primary_key: sys_id
+    table_name: sys_user_group
+    data_path: groups.json
+    fields:
+      - name: name
+        display_name: "Team Name"
+        data_type: string
+      - name: manager
+        display_name: "Team Manager (sys_id)"
+        data_type: reference
+        references: sys_user
+      - name: category
+        display_name: "Category Handled"
+        data_type: string
+
+  - id: kb_knowledge
+    display_name: "Knowledge Base Article"
+    description: "A published help article describing how to resolve an issue"
+    primary_key: sys_id
+    table_name: kb_knowledge
+    data_path: kb.json
+    fields:
+      - name: number
+        display_name: "Article Number"
+        data_type: string
+      - name: short_description
+        display_name: "Title"
+        data_type: string
+      - name: text
+        display_name: "Body"
+        data_type: string
+      - name: kb_category
+        display_name: "Category"
+        data_type: string
+      - name: workflow_state
+        display_name: "Publication Status"
+        data_type: string
+
+relations:
+  - id: incident.reportedBy
+    verb_phrase: "reported by"
+    inverse_verb_phrase: "incidents reported"
+    from_entity: incident
+    to_entity: sys_user
+    via_field: incident.caller_id
+    cardinality: many_to_one
+    inverse_relation_id: sys_user.incidentsReported
+    description: "Identifies the user who originally raised the incident"
+
+  - id: sys_user.incidentsReported
+    verb_phrase: "raised incidents"
+    inverse_verb_phrase: "reporter"
+    from_entity: sys_user
+    to_entity: incident
+    via_field: incident.caller_id
+    cardinality: one_to_many
+    inverse_relation_id: incident.reportedBy
+    description: "The collection of incidents this user has raised"
+
+  - id: incident.assignedTo
+    verb_phrase: "assigned to"
+    inverse_verb_phrase: "incidents assigned"
+    from_entity: incident
+    to_entity: sys_user
+    via_field: incident.assigned_to
+    cardinality: many_to_one
+    inverse_relation_id: sys_user.incidentsAssigned
+    description: "Identifies the user currently responsible for resolving the incident"
+
+  - id: sys_user.incidentsAssigned
+    verb_phrase: "is assigned"
+    inverse_verb_phrase: "assignee"
+    from_entity: sys_user
+    to_entity: incident
+    via_field: incident.assigned_to
+    cardinality: one_to_many
+    inverse_relation_id: incident.assignedTo
+    description: "Open work currently on this user's plate"
+
+  - id: incident.handledBy
+    verb_phrase: "handled by team"
+    inverse_verb_phrase: "team's incidents"
+    from_entity: incident
+    to_entity: sys_user_group
+    via_field: incident.assignment_group
+    cardinality: many_to_one
+    inverse_relation_id: sys_user_group.incidentsHandled
+    description: "Identifies the team responsible for the incident"
+
+  - id: sys_user_group.incidentsHandled
+    verb_phrase: "handles incidents"
+    inverse_verb_phrase: "team"
+    from_entity: sys_user_group
+    to_entity: incident
+    via_field: incident.assignment_group
+    cardinality: one_to_many
+    inverse_relation_id: incident.handledBy
+    description: "The workload assigned to this team"
+
+  - id: sys_user.managedBy
+    verb_phrase: "managed by"
+    inverse_verb_phrase: "manager"
+    from_entity: sys_user
+    to_entity: sys_user
+    via_field: sys_user.manager
+    cardinality: many_to_one
+    inverse_relation_id: sys_user.manages
+    description: "Identifies this user's reporting manager"
+
+  - id: sys_user.manages
+    verb_phrase: "manages"
+    inverse_verb_phrase: "direct reports"
+    from_entity: sys_user
+    to_entity: sys_user
+    via_field: sys_user.manager
+    cardinality: one_to_many
+    inverse_relation_id: sys_user.managedBy
+    description: "The set of users reporting to this user"
+
+  - id: sys_user_group.managedBy
+    verb_phrase: "managed by"
+    inverse_verb_phrase: "manages team"
+    from_entity: sys_user_group
+    to_entity: sys_user
+    via_field: sys_user_group.manager
+    cardinality: many_to_one
+    inverse_relation_id: sys_user.managesGroups
+    description: "Identifies the manager of this team"

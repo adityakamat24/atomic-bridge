@@ -1,0 +1,112 @@
+[
+  {
+    "sys_id": "usr001",
+    "name": "John Doe",
+    "email": "john.doe@acme.com",
+    "department": "Engineering",
+    "location": "New York",
+    "manager": "usr007",
+    "active": true,
+    "sys_created_on": "2023-04-12T09:14:00Z",
+    "sys_updated_on": "2025-11-02T17:30:00Z"
+  },
+  {
+    "sys_id": "usr002",
+    "name": "Sarah Chen",
+    "email": "sarah.chen@acme.com",
+    "department": "Product",
+    "location": "New York",
+    "manager": "usr010",
+    "active": true,
+    "sys_created_on": "2023-08-22T11:00:00Z",
+    "sys_updated_on": "2025-09-18T08:45:00Z"
+  },
+  {
+    "sys_id": "usr003",
+    "name": "Mike Wilson",
+    "email": "mike.wilson@acme.com",
+    "department": "IT Support",
+    "location": "Austin",
+    "manager": "usr009",
+    "active": true,
+    "sys_created_on": "2022-01-10T13:20:00Z",
+    "sys_updated_on": "2025-12-01T10:00:00Z"
+  },
+  {
+    "sys_id": "usr004",
+    "name": "Ravi Kumar",
+    "email": "ravi.kumar@acme.com",
+    "department": "IT Operations",
+    "location": "Bangalore",
+    "manager": "usr009",
+    "active": true,
+    "sys_created_on": "2021-06-03T07:00:00Z",
+    "sys_updated_on": "2026-04-22T14:10:00Z"
+  },
+  {
+    "sys_id": "usr005",
+    "name": "Priya Patel",
+    "email": "priya.patel@acme.com",
+    "department": "IT Operations",
+    "location": "Bangalore",
+    "manager": "usr009",
+    "active": true,
+    "sys_created_on": "2022-03-15T08:30:00Z",
+    "sys_updated_on": "2026-03-10T16:00:00Z"
+  },
+  {
+    "sys_id": "usr006",
+    "name": "Tom Brown",
+    "email": "tom.brown@acme.com",
+    "department": "Engineering",
+    "location": "New York",
+    "manager": "usr007",
+    "active": true,
+    "sys_created_on": "2024-02-19T10:00:00Z",
+    "sys_updated_on": "2026-01-12T09:00:00Z"
+  },
+  {
+    "sys_id": "usr007",
+    "name": "Alex Morgan",
+    "email": "alex.morgan@acme.com",
+    "department": "Engineering",
+    "location": "New York",
+    "manager": "usr010",
+    "active": true,
+    "sys_created_on": "2020-09-01T09:00:00Z",
+    "sys_updated_on": "2026-02-05T11:00:00Z"
+  },
+  {
+    "sys_id": "usr008",
+    "name": "James Park",
+    "email": "james.park@acme.com",
+    "department": "IT Support",
+    "location": "Austin",
+    "manager": "usr009",
+    "active": true,
+    "sys_created_on": "2023-05-30T14:00:00Z",
+    "sys_updated_on": "2025-10-18T12:30:00Z"
+  },
+  {
+    "sys_id": "usr009",
+    "name": "Deepak Sharma",
+    "email": "deepak.sharma@acme.com",
+    "department": "IT Operations",
+    "location": "Austin",
+    "manager": "usr010",
+    "active": true,
+    "sys_created_on": "2019-11-12T08:00:00Z",
+    "sys_updated_on": "2026-03-30T17:00:00Z"
+  },
+  {
+    "sys_id": "usr010",
+    "name": "Jane Smith",
+    "email": "jane.smith@acme.com",
+    "department": "Executive",
+    "location": "New York",
+    "manager": null,
+    "active": true,
+    "sys_created_on": "2018-04-01T08:00:00Z",
+    "sys_updated_on": "2026-04-01T09:00:00Z"
+  }
+]

@@ -1,0 +1,60 @@
+app = "itsm-bridge-backend"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LLM_PROVIDER = "anthropic"
+  MODEL_PLANNER = "claude-sonnet-4-6"
+  MODEL_RESPONSE = "claude-haiku-4-5"
+  MODEL_PREPROCESSOR = "claude-haiku-4-5"
+  EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+  RATE_LIMIT_PER_MIN = "60"
+  CORS_ALLOWED_ORIGINS = "https://itsm-bridge.vercel.app,http://localhost:3000"
+  MCP_TRANSPORT = "sse"
+  MCP_PORT = "8001"
+  HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+
+[[services]]
+  internal_port = 8000
+  protocol = "tcp"
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0  # scale to zero
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  [services.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 25
+  [[services.tcp_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "30s"
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "30s"
+    method = "get"
+    path = "/health/ready"
+
+[[services]]
+  internal_port = 8001
+  protocol = "tcp"
+  [[services.ports]]
+    port = 8001
+    handlers = ["tls"]
+
+[[mounts]]
+  source = "itsm_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"

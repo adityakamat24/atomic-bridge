@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  /* Atomicwork-inspired surface palette: purple-tinted dark */
+  --bg-0: #0c0810;          /* deepest, near black with purple cast */
+  --bg-1: #14101c;          /* surface */
+  --bg-2: #1c1828;          /* elevated */
+  --bg-3: #261f36;          /* hover */
+  --line-1: #221c30;        /* subtle border */
+  --line-2: #2f2742;        /* strong border */
+
+  /* Text — slightly purple-tinted white */
+  --fg-1: #f0eff5;          /* primary */
+  --fg-2: #b3afc4;          /* secondary */
+  --fg-3: #8a8699;          /* muted */
+  --fg-4: #5d5870;          /* dim */
+  --fg-5: #3e3b4d;          /* near-disabled */
+
+  /* Atomicwork brand: purple primary (gradient), orange-red CTA */
+  --brand: #9966FF;             /* signature purple */
+  --brand-deep: #7C3AED;        /* gradient stop, deeper */
+  --brand-soft: rgba(153, 102, 255, 0.10);
+  --brand-line: rgba(153, 102, 255, 0.28);
+
+  --cta: #F33F32;               /* signature orange-red — used for CTAs */
+  --cta-soft: rgba(243, 63, 50, 0.10);
+  --cta-line: rgba(243, 63, 50, 0.32);
+
+  --amber: #F3AA02;
+  --coral: #F97066;
+
+  --success: #4ec9b0;
+  --warning: #F3AA02;
+  --danger: #F33F32;
+
+  /* Per-intent dot colors (used as small swatches, no backgrounds) */
+  --hue-cyan: #5fd1ec;
+  --hue-emerald: #4ec9b0;
+  --hue-violet: #b794f6;
+  --hue-blue: #7aa2ff;
+  --hue-orange: #F33F32;
+  --hue-amber: #F3AA02;
+  --hue-rose: #fb7185;
+  --hue-slate: #8a8699;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: var(--bg-0);
+  color: var(--fg-1);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: #2a2438;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #3b3450; background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+::selection { background: rgba(153, 102, 255, 0.35); color: #fff; }
+
+/* Brand gradient — used for logo and key emphasis */
+.brand-gradient {
+  background-image: radial-gradient(circle at 25% 20%, #9966FF 0%, #7C3AED 60%, #4F1F72 100%);
+}
+.brand-gradient-text {
+  background: linear-gradient(135deg, #b794f6 0%, #9966FF 60%, #F33F32 110%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Subtle fade-in for new content */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fade-in 160ms ease-out both; }
+
+/* Indeterminate shimmer — used for "thinking" state */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--fg-4) 0, var(--fg-2) 50%, var(--fg-4) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Empty-state subtle grid texture with a soft purple glow */
+.brand-bg {
+  background:
+    radial-gradient(800px 400px at 18% 8%, rgba(124, 58, 237, 0.08), transparent 60%),
+    radial-gradient(700px 380px at 82% 0%, rgba(243, 63, 50, 0.04), transparent 60%),
+    var(--bg-0);
+}
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

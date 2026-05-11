@@ -1,0 +1,52 @@
+[
+  {
+    "sys_id": "kb-9c1f0a01",
+    "number": "KB0045678",
+    "short_description": "VPN connection issues with GlobalProtect",
+    "text": "If your GlobalProtect VPN is failing to connect, the most common cause is a recent password change. Wait at least 15 minutes after changing your password before attempting to reconnect, since the new credentials need to propagate to the VPN gateway.\n\nIf the issue persists:\n1. Confirm GlobalProtect is updated to the latest client version.\n2. Switch portals (US-East-1 → US-West-2) to rule out a regional outage.\n3. Capture the GlobalProtect log (Help → Collect Logs) and attach it to a ticket if Network Operations needs to investigate further.",
+    "kb_category": "Network",
+    "workflow_state": "published",
+    "sys_created_on": "2024-03-12T10:00:00Z",
+    "sys_updated_on": "2026-01-09T08:30:00Z"
+  },
+  {
+    "sys_id": "kb-9c1f0a02",
+    "number": "KB0045679",
+    "short_description": "Outlook crashes on startup",
+    "text": "When Outlook crashes immediately after launch, the cause is usually a misbehaving add-in or a corrupted profile.\n\nFirst, open Outlook in Safe Mode by holding Ctrl while clicking the Outlook icon, then choose Yes when prompted. If Outlook stays open in Safe Mode, the problem is an add-in.\n\nDisable add-ins one at a time (File → Options → Add-ins → Manage: COM Add-ins → Go) and restart Outlook normally between each. If Safe Mode itself crashes, create a new Outlook profile from Control Panel → Mail.",
+    "kb_category": "Software",
+    "workflow_state": "published",
+    "sys_created_on": "2024-05-21T09:00:00Z",
+    "sys_updated_on": "2025-08-04T14:00:00Z"
+  },
+  {
+    "sys_id": "kb-9c1f0a03",
+    "number": "KB0045680",
+    "short_description": "Request access to a SharePoint site",
+    "text": "To request access to a SharePoint site, submit a request through the Service Catalog. Open https://servicecatalog.acme.com, search for \"SharePoint Access\", and pick the site from the dropdown.\n\nThe owner of the site will receive an approval task; access is typically granted within one business day. If you need access urgently, ping #it-help in Slack with the site URL and your manager's name.",
+    "kb_category": "Software",
+    "workflow_state": "published",
+    "sys_created_on": "2024-09-02T11:00:00Z",
+    "sys_updated_on": "2026-02-16T10:00:00Z"
+  },
+  {
+    "sys_id": "kb-9c1f0a04",
+    "number": "KB0045681",
+    "short_description": "Building access badge not working",
+    "text": "If your access badge has stopped working, visit the Security desk in the lobby. They can re-encode your badge on the spot (takes around 5 minutes) and verify your access groups against the building directory.\n\nCommon causes are demagnetization (proximity to phones or magnetic clasps), expired physical-access entitlements after a role change, or a damaged badge that needs to be reissued.",
+    "kb_category": "Facilities",
+    "workflow_state": "published",
+    "sys_created_on": "2025-01-15T13:00:00Z",
+    "sys_updated_on": "2025-12-01T09:00:00Z"
+  },
+  {
+    "sys_id": "kb-9c1f0a05",
+    "number": "KB0045682",
+    "short_description": "Laptop slow or unresponsive after Windows update",
+    "text": "After a major Windows update, laptops sometimes become sluggish for the first few days while the system re-indexes and reinstalls drivers.\n\nIf performance does not recover after 48 hours:\n1. Run Disk Cleanup (Win+R → cleanmgr.exe) and clear the previous Windows installation files — this commonly frees 10–20 GB.\n2. Disable startup programs you do not need (Task Manager → Startup tab).\n3. Verify storage is below 80% full; SSDs slow down dramatically near capacity.",
+    "kb_category": "Hardware",
+    "workflow_state": "published",
+    "sys_created_on": "2025-03-10T08:00:00Z",
+    "sys_updated_on": "2026-01-22T12:00:00Z"
+  }
+]
