@@ -12,44 +12,28 @@ primary_region = "ord"
   EMBEDDING_MODEL = "all-MiniLM-L6-v2"
   RATE_LIMIT_PER_MIN = "60"
   CORS_ALLOWED_ORIGINS = "https://itsm-bridge.vercel.app,http://localhost:3000"
-  MCP_TRANSPORT = "sse"
-  MCP_PORT = "8001"
   HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
 
-[[services]]
+[http_service]
   internal_port = 8000
-  protocol = "tcp"
+  force_https = true
   auto_stop_machines = true
   auto_start_machines = true
-  min_machines_running = 0  # scale to zero
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-  [services.concurrency]
+  min_machines_running = 0
+
+  [http_service.concurrency]
     type = "requests"
     soft_limit = 20
     hard_limit = 25
-  [[services.tcp_checks]]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "30s"
-  [[services.http_checks]]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "30s"
-    method = "get"
-    path = "/health/ready"
 
-[[services]]
-  internal_port = 8001
-  protocol = "tcp"
-  [[services.ports]]
-    port = 8001
-    handlers = ["tls"]
+  # Generous grace period — first cold boot loads the sentence-transformers
+  # model from /home/app/.cache (~5-15s). Don't kill the machine before then.
+  [[http_service.checks]]
+    grace_period = "120s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
 
 [[mounts]]
   source = "itsm_data"
@@ -57,4 +41,4 @@ primary_region = "ord"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "1024mb"
+  memory = "2048mb"

@@ -76,16 +76,31 @@ def build_container(
     """Construct the container. Parameters allow tests to inject fakes
     instead of real LLM clients / heavy ML models.
     """
+    # Step-by-step prints so a hung deploy tells us exactly where it stopped.
+    # `print(..., flush=True)` so Docker logs see them in real time even if
+    # PYTHONUNBUFFERED isn't honoured in some sub-call.
+    print("[deps] loading schema graph", flush=True)
     graph = load_schema(settings.DATA_DIR / "schema.yaml")
-    store = InMemoryStore(graph, settings.DATA_DIR)
-    emb = embedding or SentenceTransformerEmbedding(settings.EMBEDDING_MODEL)
+    print(f"[deps] schema ok ({graph.counts()})", flush=True)
 
+    print("[deps] loading data store", flush=True)
+    store = InMemoryStore(graph, settings.DATA_DIR)
+    print("[deps] data store ok", flush=True)
+
+    print("[deps] loading embedding model (this is the slow one on cold boot)", flush=True)
+    emb = embedding or SentenceTransformerEmbedding(settings.EMBEDDING_MODEL)
+    print(f"[deps] embedding ok (dim={emb.dimension})", flush=True)
+
+    print("[deps] building KB index", flush=True)
     kb = KBRetriever(store, KBIndexer(emb))
     kb.build_index()
+    print(f"[deps] KB index ok (size={kb.size})", flush=True)
 
+    print("[deps] instantiating LLM clients", flush=True)
     pllm = planner_llm or make_llm_client("planner", settings)
     pre_llm = preprocessor_llm or make_llm_client("preprocessor", settings)
     rllm = response_llm or make_llm_client("response", settings)
+    print("[deps] LLM clients ok", flush=True)
 
     name_resolver = NameResolver(store)
     few_shot = FewShotRetriever(load_examples(FEW_SHOT_PATH), emb)
@@ -101,6 +116,7 @@ def build_container(
     rate_limiter = TokenBucketRateLimiter(per_minute=settings.RATE_LIMIT_PER_MIN)
     dual_llm = DualLLMBoundary(privileged=pllm, quarantined=rllm)
     dual_llm.assert_distinct()
+    print("[deps] container fully built", flush=True)
 
     return AppContainer(
         settings=settings,

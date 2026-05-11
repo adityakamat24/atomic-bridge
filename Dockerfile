@@ -25,8 +25,6 @@ WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-# Carry the cached HF model so it doesn't re-download at runtime.
-COPY --from=builder /root/.cache /root/.cache
 
 COPY backend/src ./src
 COPY backend/data ./data
@@ -34,8 +32,17 @@ COPY backend/eval ./eval
 COPY backend/scripts/start.sh /start.sh
 RUN chmod +x /start.sh
 
-RUN useradd -u 1000 -m app && mkdir -p /data/logs && chown -R app:app /data /app /root/.cache
+# Create the app user with a real $HOME, then copy the HF model cache from
+# the builder stage INTO the app user's home so HF can find it without an
+# env-var override (and without exposing /root). Then chown everything
+# the app user needs to write to.
+RUN useradd -u 1000 -m app && \
+    mkdir -p /data/logs /home/app/.cache && \
+    chown -R app:app /data /app /home/app
+COPY --from=builder --chown=app:app /root/.cache /home/app/.cache
+
 USER app
+ENV HOME=/home/app
 
 ENV AUDIT_LOG_PATH=/data/logs/audit.ndjson
 ENV DATA_DIR=/app/data
