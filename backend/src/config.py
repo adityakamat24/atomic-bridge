@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     LLM_PROVIDER: Literal["anthropic", "openai"] = "anthropic"
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
+    # When true AND the secondary provider's API key is also set, every LLM
+    # client is wrapped in `FallbackLLMClient`. On a terminal failure from the
+    # primary (after its retry-with-backoff loop is exhausted), the secondary
+    # provider runs the same call once before the error propagates.
+    LLM_ENABLE_FALLBACK: bool = True
 
     MODEL_PLANNER: str = "claude-sonnet-4-6"
     MODEL_RESPONSE: str = "claude-haiku-4-5"

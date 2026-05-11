@@ -2,9 +2,18 @@
 
 A natural-language layer over a ServiceNow-shaped IT data model. Built as the Atomicwork take-home.
 
-- **Live demo:** https://atomic-bridge.vercel.app/
-- **Backend API:** https://itsm-bridge-backend.fly.dev
-- **MCP SSE:** https://itsm-bridge-backend.fly.dev:8001/sse
+## The fastest way to evaluate this
+
+**The system is hosted. You don't need to clone, install, or run anything.** Open the live demo and start typing:
+
+> **Live demo: https://atomic-bridge.vercel.app/**
+
+- **Backend API:** https://itsm-bridge-backend.fly.dev (FastAPI, health at `/health`)
+- **MCP SSE endpoint:** https://itsm-bridge-backend.fly.dev:8001/sse (six tools, ready for any MCP client)
+
+Suggested starter queries in the demo cover all four query categories the PDF asks about. Local setup instructions are at the bottom if you want them, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
+
+> The live demo runs in **admin view**. Every session has full read access across all tables, can see every field (including ones flagged sensitive in the schema), and can propose write changes to any incident. Per-user scoping is called out in [What I'd do differently](#what-id-do-differently).
 
 ServiceNow stores IT data with `sys_id` references, integer-coded statuses, and field names like `assignment_group`. The user thinks in employees, tickets, severity, teams. This is the layer that translates between the two, plans the work as a structured operation list, and only then executes against the data.
 
@@ -146,6 +155,46 @@ A few items, ranked by what would move the needle most.
 
 **SSE streaming on `/v1/query`.** Right now the frontend submits a POST and waits for the full response (plan plus trace plus answer) before rendering anything. Streaming would let the plan render as soon as it was generated, then trace steps as the executor walked them, then the answer. The change that would visibly improve perceived latency the most.
 
+**Per-user views and group-scoped data.** The current build runs in admin view, so the demo shows everything to everyone. With more time I'd add real user groups and route information to the right set of people. An end user would only see their own tickets and the KB. An IT agent would see their queue plus the queue of any group they belong to. A team manager would see their groups' workload but not other teams'. A director would see across the org. The plumbing for this already half-exists: sessions carry a `view_pii` capability that the plan validator uses to strip sensitive fields, and the schema flags fields with `is_sensitive`. What's missing is the identity layer (a real auth scheme that ties a session to a `sys_user` and a set of group memberships) and a row-level filter pass on top of every `find` and `traverse` so the executor enforces visibility before resolving.
+
+---
+
+# Resilience and engineering details
+
+A handful of small things that aren't load-bearing for the four required components but show how I think about production. Most of these are dull on their own and useful when something goes wrong at 3am.
+
+**Cross-provider LLM fallback.** Every LLM client is wrapped in a `FallbackLLMClient` when both API keys are set. The primary provider (Anthropic by default) runs first. On a terminal failure after its retry loop is exhausted (the OpenAI API has a 12-minute outage, Anthropic is silently dropping requests, etc.), the secondary provider runs the same call once. `LLMToolCallMissingError` is explicitly *not* failed over because it signals a planner-prompt bug rather than a provider issue, and switching models would mask the real cause. Toggle with `LLM_ENABLE_FALLBACK`. See `backend/src/llm/fallback.py` and the four tests in `test_llm.py` under "Fallback wrapping".
+
+**Retry with exponential backoff and jitter.** `LLMRateLimitError` and `LLMTransientError` (which wraps `APITimeoutError`, `APIConnectionError`, and `InternalServerError` from both SDKs) are retried up to 3 times with delays of 1, 2, and 4 seconds plus 25% jitter. Capped at 16s per attempt. Other LLM errors propagate immediately so the request fails fast rather than hanging the client. See `backend/src/llm/retry.py`.
+
+**Token-bucket rate limiting.** 60 requests per minute per client IP, configurable via `RATE_LIMIT_PER_MIN`. Returns HTTP 429 with a clear reason. See `backend/src/api/rate_limit.py`.
+
+**Session TTL.** Conversation context expires after 30 minutes of inactivity (`SESSION_TTL_SECONDS=1800`). Sessions are an in-memory ring buffer of recent turns; the preprocessor consumes the prior turn to resolve pronouns.
+
+**Write-proposal expiry and optimistic locking.** Proposals expire after 10 minutes (`PROPOSAL_TTL_SECONDS=600`). On confirm, the handler re-fetches the target and checks `sys_updated_on` against the snapshot taken at propose time. If another write landed in between, the confirm fails with a clean conflict and the user re-issues the proposal. No silent overwrites.
+
+**Hash-chained audit log.** Every request is appended to an NDJSON log with `sha256(prev_hash + entry)` chaining. Tampering anywhere in the chain breaks every subsequent hash. Verified across 100 sequential entries by `test_guardrails.py`.
+
+**Input validation, fail-fast.** Length cap (5000 chars), Unicode NFKC normalization, banned-substring scan, and an advisory injection-pattern detector (scores but doesn't block, since the Dual LLM separation is the real defense). Bad input returns HTTP 400 before any LLM is touched.
+
+**Lazy ML loading.** The sentence-transformer model and FAISS KB index are not loaded in the request path. The model loads on first `embed()` call and the index builds on first `search()`. A FastAPI lifespan background task preloads both 5 to 15 seconds after boot, so the first real request never pays the warmup cost. The `/health` endpoint returns in about 2 seconds while warmup is still in flight.
+
+**Reference-resolver cache.** `ReferenceResolver` memoizes `(entity, sys_id) → record` lookups for the lifetime of a single request. A query that resolves the same user across 10 incidents pays one lookup, not 10.
+
+**Concurrency limits at the proxy.** Fly's request concurrency is set to a soft cap of 20 and a hard cap of 25 per machine. Beyond the hard cap, Fly queues then rejects. Keeps a runaway client from monopolizing.
+
+**Healthcheck with realistic grace period.** Fly's TCP healthcheck waits 120 seconds before the first probe (the lifespan warmup is async, so the app reports healthy quickly but the model is still loading). Interval 15s, timeout 5s. Pinned to always-on so the demo is never cold-started under review.
+
+**Vercel proxy route.** The frontend talks to the backend through `/api/proxy/[...path]` on Vercel rather than calling Fly directly from the browser. This was originally a workaround for a DNS network that couldn't resolve Fly's IPv4, but the side benefits are real: the backend URL never appears in client bundles, CORS is sidestepped, and a future move to a different backend host is a one-file change.
+
+**HTTPS-only with TLS at the edge.** `force_https = true` in fly.toml. MCP SSE on port 8001 is TLS-terminated by Fly's edge before reaching uvicorn.
+
+**MCP transport security with deployment-hostname allowlist.** The MCP SDK auto-applies a localhost-only DNS-rebinding protection layer by default, which 421s every request behind a TLS proxy. The server is configured with an explicit `MCP_ALLOWED_HOSTS` list that includes the Fly hostname, with a regression test covering both the enabled and disabled cases.
+
+**Structured logs.** Every request gets a request ID propagated through structlog. The frontend echoes it back via the trace inspector so a user reporting a bad answer can give an exact log handle.
+
+**Quality gate on every push.** CI runs ruff, mypy strict, the 285-test suite, and the 3-query eval smoke. A red build blocks merge.
+
 ---
 
 # What's beyond the four required components
@@ -169,7 +218,7 @@ cd backend
 .venv/Scripts/python.exe -m pytest tests -m "not real_llm"
 ```
 
-**280 tests passing.** Covers the schema graph (entity/relation/value-map ops, BFS, subgraph expansion), the planner (mocked LLM, validator rejection paths, role enrichment), the executor (every op handler, dangling references, the KB-to-incident category bridge), guardrails (hash chain across 100 entries), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path.
+**285 tests passing.** Covers the schema graph (entity/relation/value-map ops, BFS, subgraph expansion), the planner (mocked LLM, validator rejection paths, role enrichment), the executor (every op handler, dangling references, the KB-to-incident category bridge), guardrails (hash chain across 100 entries), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path.
 
 Quality gate: ruff + mypy strict + pytest, all clean. CI runs all three on every push.
 
@@ -200,7 +249,7 @@ atomic-bridge/
 │   │   ├── api/             # FastAPI routes + middleware + sessions
 │   │   └── mcp_server/      # 6 MCP tools (stdio + SSE)
 │   ├── eval/                # gold queries, runner, reports
-│   └── tests/               # 280 tests
+│   └── tests/               # 285 tests
 └── frontend/
     ├── app/                 # chat + schema graph viewer
     └── components/          # ChatPanel, PlanInspector (Plan/Trace/Data), ApprovalDialog

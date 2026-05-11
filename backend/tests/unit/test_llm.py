@@ -263,11 +263,12 @@ async def test_both_providers_return_same_dict_shape_for_same_tool_schema() -> N
 # ---------- Factory --------------------------------------------------------
 
 
-def _settings(provider: str) -> Settings:
+def _settings(provider: str, *, fallback: bool = False) -> Settings:
     return Settings(
         LLM_PROVIDER=provider,  # type: ignore[arg-type]
         ANTHROPIC_API_KEY="sk-ant-fake",
         OPENAI_API_KEY="sk-oai-fake",
+        LLM_ENABLE_FALLBACK=fallback,
     )
 
 
@@ -298,6 +299,83 @@ def test_factory_role_picks_correct_model() -> None:
     assert p.model == s.MODEL_PLANNER
     assert r.model == s.MODEL_RESPONSE
     assert pp.model == s.MODEL_PREPROCESSOR
+
+
+# ---------- Fallback wrapping ----------------------------------------------
+
+
+def test_factory_wraps_with_fallback_when_enabled_and_both_keys_set() -> None:
+    from src.llm.fallback import FallbackLLMClient
+
+    client = make_llm_client("planner", _settings("anthropic", fallback=True))
+    assert isinstance(client, FallbackLLMClient)
+
+
+def test_factory_skips_fallback_when_secondary_key_missing() -> None:
+    from src.llm.anthropic_client import AnthropicClient
+
+    s = Settings(
+        LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="sk-ant-fake",
+        OPENAI_API_KEY=None,
+        LLM_ENABLE_FALLBACK=True,
+    )
+    client = make_llm_client("planner", s)
+    assert isinstance(client, AnthropicClient)
+
+
+@pytest.mark.asyncio
+async def test_fallback_routes_to_secondary_on_primary_failure() -> None:
+    from src.llm.base import LLMTransientError
+    from src.llm.fallback import FallbackLLMClient
+
+    primary = AsyncMock()
+    primary.model = "primary-x"
+    primary.tool_call.side_effect = LLMTransientError("primary down")
+    fallback = AsyncMock()
+    fallback.model = "fallback-y"
+    fallback.tool_call.return_value = {"answered": "by_fallback"}
+
+    client = FallbackLLMClient(primary=primary, fallback=fallback)
+    out = await client.tool_call("hi", {"name": "f", "input_schema": {}})
+    assert out == {"answered": "by_fallback"}
+    primary.tool_call.assert_awaited_once()
+    fallback.tool_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fallback_does_not_trigger_on_tool_call_missing() -> None:
+    """LLMToolCallMissingError signals a planner-prompt bug (the model wrote
+    text instead of calling the tool). A different model is unlikely to help
+    and would mask the real cause. Don't fail over."""
+    from src.llm.fallback import FallbackLLMClient
+
+    primary = AsyncMock()
+    primary.model = "primary-x"
+    primary.tool_call.side_effect = LLMToolCallMissingError("no tool use block")
+    fallback = AsyncMock()
+    fallback.model = "fallback-y"
+
+    client = FallbackLLMClient(primary=primary, fallback=fallback)
+    with pytest.raises(LLMToolCallMissingError):
+        await client.tool_call("hi", {"name": "f", "input_schema": {}})
+    fallback.tool_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fallback_succeeds_when_primary_works() -> None:
+    from src.llm.fallback import FallbackLLMClient
+
+    primary = AsyncMock()
+    primary.model = "primary-x"
+    primary.tool_call.return_value = {"answered": "by_primary"}
+    fallback = AsyncMock()
+    fallback.model = "fallback-y"
+
+    client = FallbackLLMClient(primary=primary, fallback=fallback)
+    out = await client.tool_call("hi", {"name": "f", "input_schema": {}})
+    assert out == {"answered": "by_primary"}
+    fallback.tool_call.assert_not_awaited()
 
 
 # ---------- Real-LLM smoke (env-gated) -------------------------------------
