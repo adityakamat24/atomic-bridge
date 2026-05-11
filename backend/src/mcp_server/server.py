@@ -11,22 +11,46 @@ import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from src.api.deps import AppContainer, build_container
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.mcp_server import tools
 
 logger = logging.getLogger(__name__)
 
 
-def build_server(container: AppContainer | None = None) -> FastMCP:
+def build_server(
+    container: AppContainer | None = None, settings: Settings | None = None
+) -> FastMCP:
     """Construct the MCP server, wiring our 6 tools to the AppContainer.
     Tests pass a pre-built container; production builds one from Settings.
-    """
-    if container is None:
-        container = build_container(get_settings())
 
-    server = FastMCP("itsm-bridge")
+    Transport security note: FastMCP auto-enables DNS-rebinding protection with
+    a localhost-only Host allowlist when `host` is `127.0.0.1`/`localhost`/`::1`.
+    Behind Fly's TLS-terminating proxy the request Host header is the public
+    hostname, so we must construct the FastMCP instance with an explicit
+    `transport_security` block that lists deployment hostnames, otherwise every
+    SSE request is rejected with 421 "Invalid Host header". The allowlist is
+    config-driven via `MCP_ALLOWED_HOSTS`.
+    """
+    if settings is None:
+        settings = get_settings()
+    if container is None:
+        container = build_container(settings)
+
+    allowed_hosts = settings.mcp_allowed_hosts
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(allowed_hosts),
+        allowed_hosts=allowed_hosts,
+        allowed_origins=[],
+    )
+    server = FastMCP(
+        "itsm-bridge",
+        host=settings.MCP_HOST,
+        port=settings.MCP_PORT,
+        transport_security=transport_security,
+    )
 
     @server.tool(
         description=(

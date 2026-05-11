@@ -58,6 +58,64 @@ def test_each_tool_has_a_description(container: Any) -> None:
         assert tool.description and len(tool.description) > 5
 
 
+def test_transport_security_allows_public_hostname_from_settings(
+    tmp_path: Path,
+) -> None:
+    """FastMCP auto-applies a localhost-only Host allowlist if you don't override
+    it. Behind a TLS proxy (Fly), Host is the public hostname, which gets
+    rejected with 421 "Invalid Host header". This regression test asserts that
+    `MCP_ALLOWED_HOSTS` in Settings is honored at server construction."""
+    target = tmp_path / "data"
+    shutil.copytree(REPO_DATA_DIR, target)
+    settings = Settings(
+        DATA_DIR=target,
+        AUDIT_LOG_PATH=tmp_path / "audit.ndjson",
+        ANTHROPIC_API_KEY="sk-ant-fake",
+        OPENAI_API_KEY="sk-oai-fake",
+        MCP_ALLOWED_HOSTS="example.fly.dev:8001,localhost:*",
+    )
+    container = build_container(
+        settings,
+        embedding=_KeywordEmb(),
+        planner_llm=ScriptedLLM("plan"),
+        preprocessor_llm=ScriptedLLM("pre"),
+        response_llm=ScriptedLLM("resp"),
+    )
+    server = build_server(container, settings=settings)
+    sec = server.settings.transport_security
+    assert sec is not None
+    assert sec.enable_dns_rebinding_protection is True
+    assert "example.fly.dev:8001" in sec.allowed_hosts
+    assert "localhost:*" in sec.allowed_hosts
+
+
+def test_transport_security_disabled_when_allowlist_empty(
+    tmp_path: Path,
+) -> None:
+    """If `MCP_ALLOWED_HOSTS` is empty, protection is off (e.g. dev runs
+    where any Host is fine). Defensive — don't accidentally lock everything out."""
+    target = tmp_path / "data"
+    shutil.copytree(REPO_DATA_DIR, target)
+    settings = Settings(
+        DATA_DIR=target,
+        AUDIT_LOG_PATH=tmp_path / "audit.ndjson",
+        ANTHROPIC_API_KEY="sk-ant-fake",
+        OPENAI_API_KEY="sk-oai-fake",
+        MCP_ALLOWED_HOSTS="",
+    )
+    container = build_container(
+        settings,
+        embedding=_KeywordEmb(),
+        planner_llm=ScriptedLLM("plan"),
+        preprocessor_llm=ScriptedLLM("pre"),
+        response_llm=ScriptedLLM("resp"),
+    )
+    server = build_server(container, settings=settings)
+    sec = server.settings.transport_security
+    assert sec is not None
+    assert sec.enable_dns_rebinding_protection is False
+
+
 # ---------- get_incident -------------------------------------------------
 
 

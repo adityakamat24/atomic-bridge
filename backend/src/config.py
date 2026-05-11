@@ -45,6 +45,22 @@ class Settings(BaseSettings):
     MCP_TRANSPORT: Literal["sse", "stdio"] = "sse"
     MCP_HOST: str = "0.0.0.0"
     MCP_PORT: int = 8001
+    # Comma-separated. FastMCP applies DNS-rebinding protection at the SSE
+    # transport. When the server runs behind a TLS-terminating proxy (Fly, etc.)
+    # the Host header in incoming requests is the public hostname, not the
+    # bind address — without an explicit allowlist FastMCP returns 421
+    # "Invalid Host header". Keep localhost entries for local Inspector use.
+    MCP_ALLOWED_HOSTS: str = (
+        "itsm-bridge-backend.fly.dev:8001,"
+        "itsm-bridge-backend.fly.dev,"
+        "localhost:*,"
+        "127.0.0.1:*,"
+        "[::1]:*"
+    )
+
+    @property
+    def mcp_allowed_hosts(self) -> list[str]:
+        return [p.strip() for p in (self.MCP_ALLOWED_HOSTS or "").split(",") if p.strip()]
 
     ADMIN_TOKEN: str | None = None
 
