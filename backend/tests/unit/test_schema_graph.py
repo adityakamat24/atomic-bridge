@@ -306,3 +306,18 @@ def test_to_visjs_highlight_marks_path() -> None:
     out = g.to_visjs(highlight_path=["ticket.assignedTo"])
     highlighted = [e["id"] for e in out["edges"] if e["highlighted"]]
     assert highlighted == ["ticket.assignedTo"]
+
+
+def test_to_visjs_connects_value_maps_to_their_owning_entity() -> None:
+    """Value-map nodes must not float disconnected in the visualization.
+    Project Field→MAPS_THROUGH→ValueMap as Entity→ValueMap so the user can see
+    that `incident_state` belongs to `incident.state`, etc."""
+    g = _build_minimal()
+    out = g.to_visjs()
+    vm_edges = [e for e in out["edges"] if e["cardinality"] == "value_map"]
+    # ticket.state has value_map=state_map in the minimal graph
+    assert any(
+        e["from"] == "ticket" and e["to"] == "state_map" for e in vm_edges
+    ), f"missing ticket→state_map edge, got {vm_edges}"
+    # Edge labels carry the field name so a reader knows WHICH field uses the map
+    assert any("state" in e["label"] for e in vm_edges)

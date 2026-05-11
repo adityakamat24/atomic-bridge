@@ -86,25 +86,43 @@ function SchemaInner() {
             edges: data.edges.map((e: any) => {
               const isLit =
                 highlighted.has(String(e.id)) || Boolean(e.highlighted);
+              const isValueMap = e.cardinality === "value_map";
               return {
                 ...e,
-                arrows: { to: { enabled: true, scaleFactor: 0.55 } },
+                arrows: { to: { enabled: !isValueMap, scaleFactor: 0.55 } },
+                dashes: isValueMap ? [4, 4] : false,
                 color: {
-                  color: isLit ? "#F33F32" : "#2a2438",
-                  highlight: isLit ? "#F97066" : "#5d5870",
-                  hover: isLit ? "#F97066" : "#5d5870",
+                  color: isLit
+                    ? "#F33F32"
+                    : isValueMap
+                      ? "#3d3650"
+                      : "#2a2438",
+                  highlight: isLit
+                    ? "#F97066"
+                    : isValueMap
+                      ? "#6d6685"
+                      : "#5d5870",
+                  hover: isLit
+                    ? "#F97066"
+                    : isValueMap
+                      ? "#6d6685"
+                      : "#5d5870",
                 },
-                width: isLit ? 2.5 : 1,
+                width: isLit ? 2.5 : isValueMap ? 0.75 : 1,
                 font: {
-                  color: isLit ? "#F33F32" : "#5d5870",
-                  size: 10,
+                  color: isLit
+                    ? "#F33F32"
+                    : isValueMap
+                      ? "#7b7595"
+                      : "#5d5870",
+                  size: isValueMap ? 9 : 10,
                   face: "var(--font-mono), Menlo, monospace",
                   strokeWidth: 4,
                   strokeColor: "#0c0810",
                   align: "horizontal",
                 },
                 smooth: { enabled: true, type: "dynamic", roundness: 0.4 },
-                length: 280,
+                length: isValueMap ? 180 : 280,
                 hoverWidth: isLit ? 3.5 : 2,
               };
             }),

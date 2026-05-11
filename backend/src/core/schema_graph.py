@@ -346,6 +346,24 @@ class SchemaGraph:
                     "cardinality": rel.cardinality,
                 }
             )
+        # Project Field --MAPS_THROUGH--> ValueMap edges as Entity --uses--> ValueMap
+        # so the value-map nodes don't float disconnected in the visualization.
+        # One edge per (entity, field-using-the-map) so a value map shared across
+        # multiple fields/entities visibly fans out from each source.
+        for field in self._fields.values():
+            if not field.value_map_id:
+                continue
+            edges.append(
+                {
+                    "id": f"valuemap:{field.id}",
+                    "from": field.entity_id,
+                    "to": field.value_map_id,
+                    "label": f"{field.name} maps to",
+                    "title": f"{field.entity_id}.{field.name} -> {field.value_map_id}",
+                    "highlighted": False,
+                    "cardinality": "value_map",
+                }
+            )
         return {"nodes": nodes, "edges": edges}
 
     # ----- diagnostics ---------------------------------------------------
