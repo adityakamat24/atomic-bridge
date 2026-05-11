@@ -121,7 +121,7 @@ A worked plan for *"Show me incidents raised by people in Engineering":*
 
 ### Why a plan, not a tool-call loop
 
-Three reasons. A plan is **inspectable**: the frontend renders it before the answer arrives, and the user can see what the system decided to do. It's **replayable**: the same plan against the same data is deterministic, so the eval suite can match on substrings without flake. And it's **replaceable**: a fine-tuned classifier could emit the same JSON shape tomorrow with no changes downstream. None of that is true for a tool-call loop, where the model's choices are scattered across multiple turns and only legible through trace logs.
+Two reasons primarily, and a third worth mentioning. A plan is inspectable, so the frontend renders it before the answer arrives and the user can see what the system decided to do. It's replayable, so the eval suite can match on substrings without flake because the same plan against the same data is deterministic. The third reason is that a plan is replaceable: a fine-tuned classifier could emit the same JSON shape tomorrow and nothing downstream would care. None of that is true for a tool-call loop, where the model's choices are scattered across multiple turns and only legible through trace logs.
 
 ### Role-aware disambiguation
 
@@ -187,17 +187,17 @@ A few items, ranked by what would move the needle most.
 
 ---
 
-# What's beyond the four required components
+# What I added on top
 
 The four-component spec gets a working prototype. I built more than that because Atomicwork's product is built around three things a bare-minimum prototype wouldn't show:
 
-**HITL writes.** Atom is HITL-first. The write path here mirrors that. The planner emits a `write_proposal` op, the executor builds a per-field diff and stashes it under a one-time token, the frontend renders an approval dialog. Confirmation triggers a re-fetch and an optimistic-lock check on `sys_updated_on` before mutating. Only `create_incident` and `update_incident` are allowed, and the field set is whitelisted at the schema level. A prompt-injected "delete all incidents" cannot be represented in the plan, because the op doesn't exist.
+**HITL writes.** Atomicwork's Atom is HITL-first. The write path here mirrors that. The planner emits a `write_proposal` op, the executor builds a per-field diff and stashes it under a one-time token, the frontend renders an approval dialog. Confirmation triggers a re-fetch and an optimistic-lock check on `sys_updated_on` before mutating. Only `create_incident` and `update_incident` are allowed, and the field set is whitelisted at the schema level. A prompt-injected "delete all incidents" cannot be represented in the plan, because the op doesn't exist.
 
 **MCP.** The whole layer is exposed as a Model Context Protocol server with six tools: `query_itsm` (natural language), `get_incident`, `list_incidents`, `search_kb` (structured), and `propose_write`, `confirm_write` (the HITL pair). Both stdio (for Claude Desktop) and SSE (for remote agents). This positions Atomic Bridge as a tool another agent can use.
 
 **Guardrails.** Five named defenses, each with a paper citation. Action-Selector (Beurer-Kellner et al., 2025), the Plan-Then-Execute validation gate, Dual LLM (Willison, 2023), Spotlighting + Sandwich (Liu et al., USENIX 2024), and an input validator with a `sha256`-chained audit log verified across 100 sequential entries.
 
-There's also a 44-query gold eval suite, conversational sessions, PII redaction at the schema level, a Datadog-style trace inspector in the frontend, and live deploys. None of those are on the critical path for the four required components, so a reviewer who only wants to evaluate the spec can ignore this section.
+There's also a 44-query gold eval suite, a Datadog-style trace inspector in the frontend, and live deploys. None of those are on the critical path for the four required components, so a reviewer who only wants to evaluate the spec can ignore this section.
 
 ---
 
