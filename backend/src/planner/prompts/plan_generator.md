@@ -58,6 +58,13 @@ For questions like "incidents from Engineering people", traverse via Relations. 
 
 The Status (state) field has values: New, In Progress, On Hold, Resolved, Closed. "Open" means state NOT IN ("Resolved", "Closed"). Use operator=`in` with `state IN ("New", "In Progress", "On Hold")`.
 
+## "X's team" — disambiguating informal team membership
+
+The schema has no formal user→team membership field. When a query mentions "X's team":
+- The `manager` field on a group means "the manager OF the group" — NOT "the group X manages". Do not use `group.manager == X.sys_id` to find X's team unless the query explicitly says "the team X manages" or "X's direct reports".
+- The natural reading of "Ravi's team" / "Sarah's team" is "the assignment_group(s) X works on", which we infer from the incidents X is currently assigned to. Hop chain: user → `sys_user.incidentsAssigned` → `incident.handledBy` → group → (then traverse `sys_user_group.incidentsHandled` for downstream filters).
+- If the query also includes "department-level" wording (e.g. "Engineering folks"), filter users by `department` instead.
+
 ## Confidence
 
 Set confidence to your best honest estimate. If you're unsure between two interpretations and the difference would change the answer, set intent=ambiguous instead.

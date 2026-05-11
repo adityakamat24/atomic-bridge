@@ -59,9 +59,10 @@ def examples() -> list[FewShotExample]:
 
 
 def test_load_examples_yields_full_set(examples: list[FewShotExample]) -> None:
-    """The yaml shipped with Phase 6 has 7 examples."""
-    assert len(examples) == 7
+    """Library is grown over time; assert well-known anchors are present."""
+    assert len(examples) >= 7
     assert any("Outlook" in e.query for e in examples)
+    assert any("Ravi Kumar" in e.query for e in examples)
 
 
 def test_load_examples_each_has_plan_dict(examples: list[FewShotExample]) -> None:

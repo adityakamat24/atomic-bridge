@@ -46,6 +46,20 @@ examples:
       output_spec: {format: list, final_var: out, max_items_shown: 20}
       confidence: 0.92
 
+  - query: "What open issues does Ravi Kumar's team currently have assigned to them?"
+    intent_hint: "cross_reference; resolve 'X's team' via assignment_groups of incidents X is assigned to (NOT via group.manager — that field means 'manager OF the group', not 'group X manages')"
+    plan:
+      intent: cross_reference
+      reasoning: "The schema has no formal user→team membership. The natural reading of 'Ravi's team' is the assignment_group(s) Ravi works on, which we infer from incidents he is currently assigned to. Hop chain: user → incidentsAssigned → group (via incident.handledBy) → all open incidents handled by that group. Filter the final hop to open states."
+      operations:
+        - {op: find, id: u, entity: sys_user, filters: [{field: name, operator: eq, value: "Ravi Kumar"}]}
+        - {op: traverse, id: my_incidents, from: $u, relation: sys_user.incidentsAssigned}
+        - {op: traverse, id: my_groups, from: $my_incidents, relation: incident.handledBy}
+        - {op: traverse, id: open_in_team, from: $my_groups, relation: sys_user_group.incidentsHandled, filters: [{field: state, operator: in, value: ["New", "In Progress", "On Hold"]}]}
+        - {op: resolve, id: out, source: $open_in_team, fields: [number, short_description, state, priority, category], include_relations: [assignedTo, handledBy]}
+      output_spec: {format: list, final_var: out, max_items_shown: 20}
+      confidence: 0.85
+
   - query: "Close INC0012345"
     intent_hint: "write_proposal"
     plan:
