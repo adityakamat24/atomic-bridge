@@ -38,15 +38,36 @@ class FindOp(BaseModel):
 
 
 class TraverseOp(BaseModel):
-    """`from` is a Python keyword, so we accept it via alias and store as `from_var`."""
+    """Declarative cross-table traverse.
 
-    model_config = ConfigDict(populate_by_name=True)
+    The planner names a target entity and the relation chain to walk
+    (``to_entity`` + ``path``); the graph executor (SchemaGraph.walk)
+    resolves it deterministically. The validator confirms ``path`` is
+    a valid SHORTEST relation chain from the inferred source entity to
+    ``to_entity`` via ``SchemaGraph.validate_path``.
+
+    For per-hop filtering use ``filters_by_entity`` keyed by the entity
+    where each filter applies — e.g. ``{"incident": [{"field": "state",
+    "operator": "in", "value": ["New", "In Progress", "On Hold"]}]}``
+    applies the open-state filter at the incident hop in a chain that
+    eventually reaches ``kb_knowledge``.
+
+    ``path`` MUST contain fully-qualified relation ids
+    (``sys_user.incidentsReported``, not ``incidentsReported``). The
+    validator hard-rejects bare verb names — see ``graph.validate_path``.
+
+    ``extra="forbid"`` so an LLM regression to the old ``relation:`` shape
+    is rejected at parse time with a clear error.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     op: Literal["traverse"] = "traverse"
     id: str
     from_var: str = Field(alias="from")
-    relation: str
-    filters: list[Filter] = Field(default_factory=list)
+    to_entity: str
+    path: list[str] = Field(default_factory=list)
+    filters_by_entity: dict[str, list[Filter]] = Field(default_factory=dict)
 
 
 class AggregateOp(BaseModel):

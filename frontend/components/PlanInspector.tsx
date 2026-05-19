@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ExecutionTrace, Intent, QueryPlan } from "@/lib/types";
+import { SchemaGraphView } from "@/components/SchemaGraphView";
 
-type Tab = "plan" | "trace" | "data";
+type Tab = "plan" | "trace" | "data" | "graph";
 
 export function PlanInspector({
   plan,
@@ -16,36 +17,137 @@ export function PlanInspector({
 }) {
   const [tab, setTab] = useState<Tab>("plan");
   const dataCount = countData(data);
+  const traversed = useMemo(
+    () =>
+      trace
+        ? Array.from(new Set(trace.steps.flatMap((s) => s.graph_traversal)))
+        : [],
+    [trace],
+  );
+  // Entities the query TOUCHED, even when no edges were walked.
+  // A `kb_lookup` op touches kb_knowledge via FAISS without traversing;
+  // a pure `find` touches one entity without traversing; etc. The graph
+  // view highlights these nodes so every query lights up something.
+  // We skip synthetic "_aggregate" / "_write_proposal" entities — those
+  // aren't graph entities.
+  const touchedEntities = useMemo(
+    () =>
+      trace
+        ? Array.from(
+            new Set(
+              trace.steps
+                .map((s) => s.target_entity ?? "")
+                .filter((e) => e && !e.startsWith("_")),
+            ),
+          )
+        : [],
+    [trace],
+  );
 
-  if (!plan && !trace) {
-    return (
-      <div className="flex h-full flex-col">
-        <Header active={tab} setTab={setTab} trace={null} dataCount={0} />
-        <div className="flex flex-1 items-center justify-center p-8">
-          <div className="text-center">
-            <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded border border-line text-fg-4">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-            </div>
-            <div className="text-sm text-fg-3">No query yet.</div>
-            <div className="mt-1 text-2xs text-fg-4">
-              The plan, execution trace, and resolved data will appear here.
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const hasContent = plan != null || trace != null;
 
   return (
     <div className="flex h-full flex-col">
-      <Header active={tab} setTab={setTab} trace={trace} dataCount={dataCount} />
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === "plan" && <PlanView plan={plan} trace={trace} />}
-        {tab === "trace" && <TraceView trace={trace} />}
-        {tab === "data" && <DataView data={data} />}
+      <Header
+        active={tab}
+        setTab={setTab}
+        trace={trace}
+        dataCount={dataCount}
+        traversedCount={traversed.length}
+      />
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {tab === "graph" ? (
+          // The graph tab is always renderable — pre-query it shows the
+          // full schema for exploration; after a query it highlights the
+          // chain that was walked AND the entity nodes the query touched.
+          // The dual highlighting lets KB lookups (which walk zero edges)
+          // still light up the `kb_knowledge` node.
+          <div className="h-full">
+            <SchemaGraphView
+              highlightedRelations={traversed}
+              highlightedEntities={touchedEntities}
+              compact
+            />
+          </div>
+        ) : !hasContent ? (
+          <EmptyState />
+        ) : tab === "plan" ? (
+          <div className="h-full overflow-y-auto">
+            <PlanView plan={plan} trace={trace} />
+          </div>
+        ) : tab === "trace" ? (
+          <div className="h-full overflow-y-auto">
+            <TraceView trace={trace} />
+          </div>
+        ) : (
+          <div className="h-full overflow-y-auto">
+            <DataView data={data} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  // Teaching empty-state: tell the user what each tab will show *before*
+  // the first query, so the inspector doesn't feel like dead real-estate.
+  const rows: { tag: string; title: string; body: string }[] = [
+    {
+      tag: "plan",
+      title: "How Atom will answer",
+      body: "The structured walk Atom is about to run — intent, operations, output shape.",
+    },
+    {
+      tag: "trace",
+      title: "What Atom actually did",
+      body: "Every op, every record count, every fallback chain the engine tried.",
+    },
+    {
+      tag: "data",
+      title: "The resolved records",
+      body: "Display-value rows ready to read — no sys_id soup.",
+    },
+    {
+      tag: "graph",
+      title: "Schema map (browseable now)",
+      body: "After a query, the walked chain lights up in red. Switch tabs to explore.",
+    },
+  ];
+  return (
+    <div className="brand-bg flex h-full flex-col items-center justify-center px-6 py-10">
+      <div className="w-full max-w-sm space-y-4">
+        <div className="text-center">
+          <div className="font-mono text-2xs uppercase tracking-wider text-fg-4">
+            Inspector
+          </div>
+          <div className="mt-1 text-sm text-fg-2">
+            Ask Atom anything — the plan, trace, and data land here.
+          </div>
+        </div>
+        <ol className="space-y-1.5">
+          {rows.map((r, i) => (
+            <li
+              key={r.tag}
+              className="flex items-start gap-3 rounded-md border border-line bg-bg-1/70 px-3 py-2"
+            >
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-line bg-bg-2 font-mono text-2xs text-fg-3">
+                {i + 1}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-2">
+                  <span className="font-mono text-2xs uppercase tracking-wider text-brand">
+                    {r.tag}
+                  </span>
+                  <span className="text-xs text-fg-2">{r.title}</span>
+                </span>
+                <span className="mt-0.5 block text-2xs text-fg-4">
+                  {r.body}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );
@@ -67,14 +169,22 @@ function Header({
   setTab,
   trace,
   dataCount,
+  traversedCount,
 }: {
   active: Tab;
   setTab: (t: Tab) => void;
   trace: ExecutionTrace | null;
   dataCount: number;
+  traversedCount: number;
 }) {
+  const subtitleFor: Record<Tab, string> = {
+    plan: "how Atom will answer",
+    trace: "what Atom actually did",
+    data: "resolved records",
+    graph: "schema map",
+  };
   return (
-    <div className="flex items-center justify-between border-b border-line bg-bg px-4 h-10">
+    <div className="flex items-center justify-between gap-3 border-b border-line bg-bg px-4 h-10">
       <div className="flex items-center gap-1">
         <TabButton on={active === "plan"} onClick={() => setTab("plan")}>
           Plan
@@ -95,12 +205,25 @@ function Header({
             </span>
           )}
         </TabButton>
+        <TabButton on={active === "graph"} onClick={() => setTab("graph")}>
+          Graph
+          {traversedCount > 0 && (
+            <span className="ml-1 font-mono text-2xs text-cta">
+              {traversedCount}
+            </span>
+          )}
+        </TabButton>
       </div>
-      {trace && (
-        <span className="font-mono text-2xs text-fg-4">
-          {trace.total_latency_ms}ms total
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="hidden truncate text-2xs italic text-fg-4 md:inline">
+          {subtitleFor[active]}
         </span>
-      )}
+        {trace && (
+          <span className="shrink-0 font-mono text-2xs text-fg-4">
+            {trace.total_latency_ms}ms total
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -226,9 +349,14 @@ const ENTITY_LABEL: Record<string, string> = {
   sys_user: "User",
   sys_user_group: "Team",
   kb_knowledge: "KB Article",
+  category: "Category",
   _aggregate: "Aggregate",
   _write_proposal: "Proposal",
 };
+
+function entityLabel(e: string): string {
+  return ENTITY_LABEL[e] ?? e;
+}
 
 function EntityWalk({ entities }: { entities: string[] }) {
   return (
@@ -295,12 +423,299 @@ function OpRow({ op, index }: { op: Record<string, unknown>; index: number }) {
           {open ? "−" : "+"}
         </span>
       </button>
+      <OpSummary op={op} />
       {open && (
         <pre className="overflow-x-auto border-t border-line bg-bg p-3 font-mono text-[11px] text-fg-2 whitespace-pre-wrap break-words">
           {JSON.stringify(rest, null, 2)}
         </pre>
       )}
     </li>
+  );
+}
+
+/**
+ * Always-visible compact summary of each op's intent. The reviewer asked
+ * for inspectable plans — a JSON dump behind a toggle is the bare minimum.
+ * This row makes the plan readable at a glance:
+ *
+ *   find #u                 sys_user where name contains "Ravi"
+ *   traverse #kb            $u → raised incidents → in category → has articles → kb_knowledge
+ *                            filtered at incident: state in [New, In Progress, On Hold]
+ *   resolve #out            number, short_description, state · via reportedBy
+ */
+function OpSummary({ op }: { op: Record<string, unknown> }) {
+  const opName = String(op.op);
+  switch (opName) {
+    case "find":
+      return <FindSummary op={op} />;
+    case "traverse":
+      return <TraverseSummary op={op} />;
+    case "aggregate":
+      return <AggregateSummary op={op} />;
+    case "kb_lookup":
+      return <KBLookupSummary op={op} />;
+    case "resolve":
+      return <ResolveSummary op={op} />;
+    case "write_proposal":
+      return <WriteProposalSummary op={op} />;
+    default:
+      return null;
+  }
+}
+
+function FindSummary({ op }: { op: Record<string, unknown> }) {
+  const entity = String(op.entity ?? "");
+  const filters = (op.filters as unknown[] | undefined) ?? [];
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <EntityChip entity={entity} />
+        {filters.length > 0 && (
+          <>
+            <span className="text-fg-4">where</span>
+            <FilterChips filters={filters} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TraverseSummary({ op }: { op: Record<string, unknown> }) {
+  const fromVar = String(op.from ?? "");
+  const toEntity = String(op.to_entity ?? "");
+  const path = (op.path as string[] | undefined) ?? [];
+  const fbe = (op.filters_by_entity as
+    | Record<string, unknown[]>
+    | undefined) ?? {};
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <VarChip name={fromVar} />
+        {path.length > 0 ? (
+          path.map((relId) => (
+            <span key={relId} className="flex items-center gap-1.5">
+              <span className="text-fg-4">→</span>
+              <RelationChip relId={relId} />
+            </span>
+          ))
+        ) : (
+          <span className="text-fg-4">→ (reflexive)</span>
+        )}
+        {toEntity && (
+          <>
+            <span className="text-fg-4">→</span>
+            <EntityChip entity={toEntity} />
+          </>
+        )}
+      </div>
+      {Object.keys(fbe).length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {Object.entries(fbe).map(([ent, filters]) => (
+            <div key={ent} className="flex flex-wrap items-center gap-1.5">
+              <span className="text-2xs text-fg-4">
+                filtered at <EntityChipMini entity={ent} />:
+              </span>
+              <FilterChips filters={filters as unknown[]} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AggregateSummary({ op }: { op: Record<string, unknown> }) {
+  const source = String(op.source ?? "");
+  const operation = String(op.operation ?? "");
+  const groupBy = op.group_by_field as string | undefined;
+  const n = op.n as number | undefined;
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5 text-fg-2">
+        <VarChip name={source} />
+        <span className="text-fg-4">→</span>
+        <span className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs">
+          {operation}
+        </span>
+        {groupBy && (
+          <>
+            <span className="text-fg-4">by</span>
+            <span className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs">
+              {groupBy}
+            </span>
+          </>
+        )}
+        {n != null && (
+          <span className="text-2xs text-fg-4">top {n}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function KBLookupSummary({ op }: { op: Record<string, unknown> }) {
+  const q = String(op.query ?? "");
+  const hint = op.category_hint as string | undefined;
+  const topK = op.top_k as number | undefined;
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-2xs text-fg-2">&ldquo;{q}&rdquo;</span>
+        {hint && (
+          <span className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-3">
+            category={hint}
+          </span>
+        )}
+        {topK != null && (
+          <span className="text-2xs text-fg-4">top {topK}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResolveSummary({ op }: { op: Record<string, unknown> }) {
+  const source = String(op.source ?? "");
+  const fields = (op.fields as string[] | undefined) ?? [];
+  const rels = (op.include_relations as string[] | undefined) ?? [];
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <VarChip name={source} />
+        <span className="text-fg-4">→</span>
+        <span className="text-fg-3">fields:</span>
+        {fields.map((f) => (
+          <span
+            key={f}
+            className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-2"
+          >
+            {f}
+          </span>
+        ))}
+      </div>
+      {rels.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-2xs text-fg-4">via:</span>
+          {rels.map((r) => (
+            <span
+              key={r}
+              className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-brand"
+            >
+              {r}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WriteProposalSummary({ op }: { op: Record<string, unknown> }) {
+  const action = String(op.action ?? "");
+  const targetVar = op.target_var as string | undefined;
+  const fields = (op.fields as Record<string, unknown> | undefined) ?? {};
+  return (
+    <div className="border-t border-line/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-cta">
+          {action}
+        </span>
+        {targetVar && (
+          <>
+            <span className="text-fg-4">on</span>
+            <VarChip name={targetVar} />
+          </>
+        )}
+      </div>
+      {Object.keys(fields).length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span className="text-2xs text-fg-4">set:</span>
+          {Object.entries(fields).map(([k, v]) => (
+            <span
+              key={k}
+              className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-2"
+            >
+              {k}={String(v)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Reusable chips -------------------------------------------------------
+
+function EntityChip({ entity }: { entity: string }) {
+  if (!entity) return null;
+  return (
+    <span
+      className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-brand"
+      title={entity}
+    >
+      {entityLabel(entity)}
+    </span>
+  );
+}
+
+function EntityChipMini({ entity }: { entity: string }) {
+  return (
+    <span
+      className="ml-0.5 rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-2"
+      title={entity}
+    >
+      {entityLabel(entity)}
+    </span>
+  );
+}
+
+function RelationChip({ relId }: { relId: string }) {
+  // relId is like "sys_user.incidentsReported" — split for cleaner display.
+  const dot = relId.indexOf(".");
+  const verb = dot >= 0 ? relId.slice(dot + 1) : relId;
+  return (
+    <span
+      className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-brand"
+      title={relId}
+    >
+      {verb}
+    </span>
+  );
+}
+
+function VarChip({ name }: { name: string }) {
+  return (
+    <span className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-2">
+      {name}
+    </span>
+  );
+}
+
+function FilterChips({ filters }: { filters: unknown[] }) {
+  return (
+    <>
+      {filters.map((f, i) => {
+        if (!f || typeof f !== "object") return null;
+        const fr = f as Record<string, unknown>;
+        const field = String(fr.field ?? "");
+        const op = String(fr.operator ?? "");
+        const v = fr.value;
+        const valueStr = Array.isArray(v)
+          ? `[${v.join(", ")}]`
+          : v == null
+          ? ""
+          : String(v);
+        return (
+          <span
+            key={i}
+            className="rounded border border-line bg-bg px-1.5 py-px font-mono text-2xs text-fg-2"
+          >
+            {field} {op} {valueStr}
+          </span>
+        );
+      })}
+    </>
   );
 }
 
@@ -348,15 +763,110 @@ function TraceView({ trace }: { trace: ExecutionTrace | null }) {
                 </div>
                 <div className="mt-2 text-xs text-fg-2">{s.outputs_summary}</div>
                 {s.graph_traversal.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {s.graph_traversal.map((rel) => (
-                      <span
-                        key={rel}
-                        className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-brand"
-                      >
-                        {rel}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                    {s.graph_traversal.map((rel, idx) => (
+                      <span key={rel} className="flex items-center gap-1">
+                        {idx > 0 && (
+                          <span className="text-2xs text-fg-3">→</span>
+                        )}
+                        <span className="rounded border border-cta-line bg-cta-soft px-1.5 py-px font-mono text-2xs text-brand">
+                          {rel}
+                        </span>
                       </span>
                     ))}
+                  </div>
+                )}
+                {s.hops_filtered && s.hops_filtered.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <span className="text-2xs text-fg-3">filtered at:</span>
+                    {s.hops_filtered.map((entity) => (
+                      <span
+                        key={entity}
+                        className="rounded border border-line/60 bg-bg-2 px-1.5 py-px font-mono text-2xs text-fg-2"
+                      >
+                        {entity}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {s.scored_alternatives && s.scored_alternatives.length > 0 && (
+                  <div className="mt-2 rounded border border-line/60 bg-bg-2/60 p-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-2xs uppercase tracking-wider text-cta">
+                        LLM scorer ranked {s.scored_alternatives.length} paths
+                      </span>
+                      {s.scoring_latency_ms != null && (
+                        <span className="font-mono text-2xs text-fg-4">
+                          +{s.scoring_latency_ms}ms
+                        </span>
+                      )}
+                      {s.scoring_confidence != null && (
+                        <span
+                          className={`font-mono text-2xs ${
+                            s.scoring_confidence < 0.4
+                              ? "text-warning"
+                              : "text-fg-3"
+                          }`}
+                        >
+                          conf {(s.scoring_confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {s.scored_alternatives.map((alt) => (
+                        <li
+                          key={alt.index}
+                          className={`flex items-center gap-1.5 ${
+                            alt.chosen ? "text-fg" : "text-fg-3"
+                          }`}
+                        >
+                          <span className="w-3 text-2xs">
+                            {alt.chosen ? "✓" : "·"}
+                          </span>
+                          <span className="font-mono text-2xs">
+                            {alt.verb_chain}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {s.scoring_reasoning && (
+                      <div className="mt-1.5 border-t border-line/60 pt-1 text-2xs italic text-fg-3">
+                        “{s.scoring_reasoning}”
+                      </div>
+                    )}
+                  </div>
+                )}
+                {s.attempted_paths && s.attempted_paths.length > 1 && (
+                  // When the engine had to walk more than one chain (i.e.
+                  // a higher-ranked candidate returned zero records, so it
+                  // fell back to the next), surface what actually happened.
+                  // This is the reviewer's "rank them" prescription made
+                  // visible — the user can see which interpretations were
+                  // tried and which one produced the answer.
+                  <div className="mt-2 rounded border border-warning/30 bg-warning/5 p-2">
+                    <div className="font-mono text-2xs uppercase tracking-wider text-warning">
+                      Engine fallback · walked {s.attempted_paths.length} chains
+                    </div>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {s.attempted_paths.map((att) => (
+                        <li
+                          key={att.rank}
+                          className={`flex items-center gap-1.5 font-mono text-2xs ${
+                            att.used ? "text-fg" : "text-fg-4"
+                          }`}
+                        >
+                          <span className="w-3 text-right">{att.rank}.</span>
+                          <span>{att.path.join(" → ") || "(reflexive)"}</span>
+                          <span className="ml-auto">
+                            {att.records_count} rec
+                            {att.records_count === 1 ? "" : "s"}
+                          </span>
+                          <span className="w-3">
+                            {att.used ? "✓" : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
                 {s.warnings.length > 0 && (
@@ -390,8 +900,33 @@ function DataView({ data }: { data: unknown }) {
   if (Array.isArray(data)) {
     if (data.length === 0) {
       return (
-        <div className="p-6 text-sm text-fg-3">
-          Query returned 0 records.
+        <div className="px-4 py-6">
+          <div className="rounded-md border border-line bg-bg-1 p-4">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-line text-fg-4">
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+              </span>
+              <span className="text-sm text-fg-2">
+                This walk returned 0 records.
+              </span>
+            </div>
+            <div className="mt-2 pl-7 text-2xs text-fg-4">
+              The trace tab shows every chain the engine tried — useful for
+              spotting filter mismatches or empty branches.
+            </div>
+          </div>
         </div>
       );
     }

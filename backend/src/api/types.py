@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from src.executor.trace import ExecutionTrace
+from src.core.trace import ExecutionTrace
 from src.planner.plan_schema import Intent, QueryPlan
 from src.write_path.proposal import WriteProposal
 

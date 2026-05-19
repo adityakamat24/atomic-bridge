@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.data_store import Filter, Record
+from src.core.filters import apply_filters as _apply_filters
 from src.core.schema_graph import SchemaGraph
 
 
@@ -119,121 +120,11 @@ class InMemoryStore:
         return f"INC{max_n + 1:07d}"
 
 
-# =============================================================================
-# Filter evaluation. Module-level so the executor can reuse it for post-
-# traversal filtering (see `04-executor.md` apply_filters reference).
-# =============================================================================
-
-
-def apply_filters(
-    records: list[Record],
-    filters: list[Filter],
-    entity_id: str,
-    graph: SchemaGraph,
-) -> list[Record]:
-    """Public wrapper. Returns records that match ALL filters (AND semantics)."""
-    return _apply_filters(records, filters, entity_id, graph)
-
-
-def _apply_filters(
-    records: list[Record],
-    filters: list[Filter],
-    entity_id: str,
-    graph: SchemaGraph,
-) -> list[Record]:
-    out = list(records)
-    for f in filters:
-        out = [r for r in out if _matches(r, f, entity_id, graph)]
-    return out
-
-
-def _matches(record: Record, f: Filter, entity_id: str, graph: SchemaGraph) -> bool:
-    field_name = f.field.split(".")[-1]
-    full_field_id = f.field if "." in f.field else f"{entity_id}.{f.field}"
-    rv = record.get(field_name)
-
-    op = f.operator
-    if op == "is_null":
-        return rv is None
-    if op == "is_not_null":
-        return rv is not None
-
-    # All remaining operators need a non-null record value.
-    if rv is None:
-        return False
-
-    value = _translate_value(f.value, full_field_id, graph)
-
-    if op == "in":
-        if not isinstance(value, list):
-            return False
-        return rv in value
-
-    rv_cmp: Any = rv
-    value_cmp: Any = value
-    if (
-        isinstance(rv, str)
-        and isinstance(value, str)
-        and not f.case_sensitive
-    ):
-        rv_cmp = rv.lower()
-        value_cmp = value.lower()
-
-    if op == "eq":
-        return bool(rv_cmp == value_cmp)
-    if op == "neq":
-        return bool(rv_cmp != value_cmp)
-    if op == "contains":
-        if isinstance(rv_cmp, str) and isinstance(value_cmp, str):
-            return value_cmp in rv_cmp
-        if isinstance(rv, list):
-            return value in rv
-        return False
-    if op == "gt":
-        return bool(rv > value)
-    if op == "lt":
-        return bool(rv < value)
-    if op == "gte":
-        return bool(rv >= value)
-    if op == "lte":
-        return bool(rv <= value)
-    return False
-
-
-def _translate_value(
-    value: Any, field_id: str, graph: SchemaGraph
-) -> Any:
-    """Translate display strings to integer codes for value-mapped fields.
-
-    Pass-through for unmapped fields, integer codes, None, and unknown labels.
-    The validator (Phase 5) is the strict gate; the store is permissive so a
-    direct API caller passing 'In Progress' still gets results.
-    """
-    if value is None:
-        return value
-    if not graph.has_field(field_id):
-        return value
-    field = graph.field(field_id)
-    if field.value_map_id is None:
-        return value
-    vm = graph.value_map(field.value_map_id)
-
-    def translate_one(v: Any) -> Any:
-        if isinstance(v, int):
-            return v
-        if isinstance(v, str):
-            fuzzy = vm.fuzzy_from_display(v)
-            if fuzzy is not None:
-                return fuzzy
-            try:
-                return vm.from_display(v)
-            except KeyError:
-                return v
-        return v
-
-    if isinstance(value, list):
-        return [translate_one(v) for v in value]
-    return translate_one(value)
+# Public re-export. Implementation lives in core/filters.py so the
+# SchemaGraph's execution layer can use the same logic without a circular
+# import. Existing callers that import `apply_filters` from this module
+# continue to work.
+apply_filters = _apply_filters
 
 
 def _utc_now_iso() -> str:

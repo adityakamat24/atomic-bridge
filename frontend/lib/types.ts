@@ -17,9 +17,24 @@ export interface Filter {
   case_sensitive?: boolean;
 }
 
+/**
+ * Declarative traverse op as emitted by the new Planner: names a
+ * target entity and the relation chain to walk; the validator confirms
+ * the chain is a shortest path from the inferred source entity. The
+ * legacy `relation` field is gone post-rewrite.
+ */
+export interface TraverseOpExtras {
+  from?: string;
+  to_entity?: string;
+  path?: string[];
+  filters_by_entity?: Record<string, Filter[]>;
+}
+
 export interface Operation {
   op: string;
   id: string;
+  // Op-specific fields are loose — the inspector renders them generically
+  // via JSON. TraverseOp's declarative shape is documented above.
   [key: string]: unknown;
 }
 
@@ -36,6 +51,20 @@ export interface QueryPlan {
   output_spec: OutputSpec | null;
   confidence: number;
   clarification_needed: string | null;
+  /**
+   * When the planner returns intent=ambiguous, it MAY emit a short list
+   * of disambiguated re-phrasings the user can click to re-submit. Kept
+   * optional so the UI degrades gracefully when the backend doesn't
+   * provide it (the clarification text alone still renders).
+   */
+  clarification_options?: string[];
+}
+
+export interface ScoredAlternative {
+  index: number;
+  path: string[];
+  verb_chain: string;
+  chosen: boolean;
 }
 
 export interface TraceStep {
@@ -46,8 +75,43 @@ export interface TraceStep {
   outputs_count: number;
   latency_ms: number;
   warnings: string[];
+  /**
+   * For traverse steps: the relation chain that was actually walked.
+   * For resolve steps: relations that were inlined via include_relations.
+   * Read by the schema view to highlight edges.
+   */
   graph_traversal: string[];
   target_entity?: string;
+  /**
+   * Entities at which filters_by_entity fired on a declarative
+   * traverse. Renders as small "filtered at" badges in the trace tab.
+   */
+  hops_filtered?: string[];
+  /**
+   * Populated only when SchemaGraph.walk had to call the RelationScorer
+   * to rank multiple candidate chains. Includes the ranking + the chain
+   * marked `chosen` (which is the rank-0 entry).
+   */
+  scored_alternatives?: ScoredAlternative[] | null;
+  scoring_latency_ms?: number | null;
+  scoring_reasoning?: string | null;
+  scoring_confidence?: number | null;
+  /**
+   * Every chain the engine attempted, in ranking order. The reviewer
+   * asked us to RANK chains and walk them; this records what actually
+   * happened. When the top-ranked chain returned zero records, the
+   * engine fell back to the next-ranked. The entry with `used: true`
+   * is the one whose records made it into the final output.
+   */
+  attempted_paths?: AttemptedPath[] | null;
+}
+
+export interface AttemptedPath {
+  rank: number;
+  candidate_index: number;
+  path: string[];
+  records_count: number;
+  used: boolean;
 }
 
 export interface ExecutionTrace {

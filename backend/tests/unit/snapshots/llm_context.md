@@ -38,6 +38,7 @@ Outbound relations:
 - incidentsAssigned: sys_user is assigned incident (cardinality one_to_many)
 - managedBy: sys_user managed by sys_user (cardinality many_to_one)
 - manages: sys_user manages sys_user (cardinality one_to_many)
+- managesGroups: sys_user manages team sys_user_group (cardinality one_to_many)
 
 ## sys_user_group (Assignment Group)
 A team of IT staff that handles a category of incidents

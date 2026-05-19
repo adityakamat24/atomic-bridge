@@ -18,6 +18,7 @@ from src.planner.plan_schema import (
 MAX_OPERATIONS = 10
 MAX_TRAVERSE_OPS = 5
 MAX_FIND_LIMIT = 1000
+MAX_PATH_HOPS = 4  # caps the declarative traverse chain length
 
 WRITE_INCIDENT_ALLOWED_FIELDS = {
     "short_description",
@@ -82,11 +83,16 @@ class PlanValidator:
                     f"op {op.id!r}: write_proposal must be the last operation"
                 )
 
-        # Per-op checks. Walk in order so $var refs can be checked.
+        # Per-op checks. Walk in order so $var refs and entity inference
+        # can both be threaded through.
         defined_vars: set[str] = set()
+        # var_id -> entity it produces. Used to validate declarative
+        # TraverseOp paths against the inferred source entity.
+        var_entity: dict[str, str] = {}
         for op in plan.operations:
-            self._validate_op(op, defined_vars, errors)
+            self._validate_op(op, defined_vars, var_entity, errors)
             defined_vars.add(op.id)
+            self._record_var_entity(op, var_entity)
 
         # Output spec must reference a defined variable.
         if plan.output_spec and plan.output_spec.final_var not in defined_vars:
@@ -100,15 +106,36 @@ class PlanValidator:
 
         return self._transform(plan)
 
+    def _record_var_entity(
+        self, op: Operation, var_entity: dict[str, str],
+    ) -> None:
+        """Track the entity each op binds to its variable id. Lets the
+        declarative TraverseOp validator (next op) infer source_entity."""
+        if isinstance(op, FindOp):
+            var_entity[op.id] = op.entity
+        elif isinstance(op, TraverseOp):
+            var_entity[op.id] = op.to_entity
+        elif isinstance(op, KBLookupOp):
+            var_entity[op.id] = "kb_knowledge"
+        elif isinstance(op, ResolveOp):
+            src_var = op.source.lstrip("$")
+            if src_var in var_entity:
+                var_entity[op.id] = var_entity[src_var]
+        # AggregateOp and WriteProposalOp produce scalars / proposals, not entity records.
+
     # ------------------------------------------------------------- per-op
 
     def _validate_op(
-        self, op: Operation, defined_vars: set[str], errors: list[str]
+        self,
+        op: Operation,
+        defined_vars: set[str],
+        var_entity: dict[str, str],
+        errors: list[str],
     ) -> None:
         if isinstance(op, FindOp):
             self._check_find(op, errors)
         elif isinstance(op, TraverseOp):
-            self._check_traverse(op, defined_vars, errors)
+            self._check_traverse(op, defined_vars, var_entity, errors)
         elif isinstance(op, AggregateOp):
             self._check_aggregate(op, defined_vars, errors)
         elif isinstance(op, KBLookupOp):
@@ -129,20 +156,99 @@ class PlanValidator:
         self._check_filters(op.filters, op.entity, op.id, errors)
 
     def _check_traverse(
-        self, op: TraverseOp, defined_vars: set[str], errors: list[str]
+        self,
+        op: TraverseOp,
+        defined_vars: set[str],
+        var_entity: dict[str, str],
+        errors: list[str],
     ) -> None:
         var_id = op.from_var.lstrip("$")
         if var_id not in defined_vars:
             errors.append(
                 f"op {op.id!r}: from {op.from_var!r} references undefined variable"
             )
-        if not self._graph.has_relation(op.relation):
+            return
+
+        if not self._graph.has_entity(op.to_entity):
             errors.append(
-                f"op {op.id!r}: relation {op.relation!r} does not exist"
+                f"op {op.id!r}: to_entity {op.to_entity!r} does not exist"
             )
             return
-        rel = self._graph.relation(op.relation)
-        self._check_filters(op.filters, rel.to_entity, op.id, errors)
+        source_entity = var_entity.get(var_id, "")
+        if not source_entity:
+            errors.append(
+                f"op {op.id!r}: cannot infer source entity for "
+                f"from={op.from_var!r}; ensure the upstream op binds an entity"
+            )
+            return
+
+        # The planner may either:
+        #  (a) supply `path` explicitly — when the user's phrasing makes
+        #      the chain unambiguous ("tickets Ravi raised"); we validate
+        #      it's a valid shortest chain.
+        #  (b) leave `path` empty — letting the executor enumerate
+        #      shortest chains and delegate path-picking to the LLM
+        #      scorer (the reviewer's prescription). We only verify the
+        #      target is reachable.
+        if op.path:
+            if len(op.path) > MAX_PATH_HOPS:
+                errors.append(
+                    f"op {op.id!r}: path length {len(op.path)} exceeds "
+                    f"MAX_PATH_HOPS={MAX_PATH_HOPS}"
+                )
+                return
+            path_errors = self._graph.validate_path(
+                source_entity, op.to_entity, op.path,
+                max_hops=MAX_PATH_HOPS,
+            )
+            for e in path_errors:
+                errors.append(f"op {op.id!r}: {e}")
+            if path_errors:
+                return
+            chain_entities: set[str] = {op.to_entity}
+            for rid in op.path:
+                rel = self._graph.relation(rid)
+                chain_entities.add(rel.from_entity)
+                chain_entities.add(rel.to_entity)
+        else:
+            # Engine-resolved path: assert at least one shortest chain
+            # exists within MAX_PATH_HOPS. If reflexive, that's fine.
+            if source_entity != op.to_entity:
+                candidates = self._graph.shortest_relation_paths(
+                    source_entity, op.to_entity, max_hops=MAX_PATH_HOPS,
+                )
+                if not candidates:
+                    errors.append(
+                        f"op {op.id!r}: no shortest chain from "
+                        f"{source_entity!r} to {op.to_entity!r} within "
+                        f"max_hops={MAX_PATH_HOPS}; check that the entities "
+                        f"are reachable"
+                    )
+                    return
+            # When path is engine-resolved, filters_by_entity keys are
+            # not validated against a specific chain (multiple are
+            # possible). They MUST still be real entities though.
+            chain_entities = {op.to_entity}
+            if source_entity:
+                chain_entities.add(source_entity)
+            for ent in op.filters_by_entity:
+                if not self._graph.has_entity(ent):
+                    errors.append(
+                        f"op {op.id!r}: filters_by_entity[{ent!r}] "
+                        f"is not a known entity"
+                    )
+
+        for entity_id, filters in op.filters_by_entity.items():
+            if op.path and entity_id not in chain_entities:
+                errors.append(
+                    f"op {op.id!r}: filters_by_entity[{entity_id!r}] "
+                    f"targets an entity not in the resolved chain "
+                    f"(chain entities: {sorted(chain_entities)})"
+                )
+                continue
+            if not self._graph.has_entity(entity_id):
+                continue  # already reported above
+            self._check_filters(filters, entity_id, op.id, errors)
 
     def _check_aggregate(
         self, op: AggregateOp, defined_vars: set[str], errors: list[str]
@@ -258,16 +364,12 @@ class PlanValidator:
                     )
                 )
             elif isinstance(op, TraverseOp):
-                rel = self._graph.relation(op.relation)
+                new_fbe = {
+                    ent: [self._translate_filter(f, ent) for f in fs]
+                    for ent, fs in op.filters_by_entity.items()
+                }
                 new_ops.append(
-                    op.model_copy(
-                        update={
-                            "filters": [
-                                self._translate_filter(f, rel.to_entity)
-                                for f in op.filters
-                            ]
-                        }
-                    )
+                    op.model_copy(update={"filters_by_entity": new_fbe})
                 )
             elif isinstance(op, ResolveOp):
                 new_ops.append(self._strip_pii_fields(op))

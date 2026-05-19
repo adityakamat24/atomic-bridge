@@ -30,9 +30,16 @@ def test_pydantic_rejects_unknown_op_at_parse_time() -> None:
 
 def test_traverse_op_accepts_from_alias() -> None:
     op = TraverseOp.model_validate(
-        {"op": "traverse", "id": "i1", "from": "$u1", "relation": "x"}
+        {
+            "op": "traverse",
+            "id": "i1",
+            "from": "$u1",
+            "to_entity": "incident",
+            "path": ["sys_user.incidentsReported"],
+        }
     )
     assert op.from_var == "$u1"
+    assert op.to_entity == "incident"
 
 
 def test_ambiguous_plan_must_have_no_operations() -> None:
@@ -116,7 +123,8 @@ def test_full_round_trip_valid_lookup_plan() -> None:
                     "op": "traverse",
                     "id": "i1",
                     "from": "$u1",
-                    "relation": "sys_user.incidentsReported",
+                    "to_entity": "incident",
+                    "path": ["sys_user.incidentsReported"],
                 }
             ),
             ResolveOp(id="out", source="$i1", fields=["number", "state"]),

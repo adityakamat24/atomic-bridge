@@ -147,19 +147,11 @@ async def test_smoke_runs_three_categories_with_scripted_llms(
             "expected": {"intent": "out_of_scope"},
         },
     ]
-    # Lookup: pre + plan + response
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "lookup",
-            "rewritten_query": "x",
-            "entity_mentions": [],
-            "relevant_entities": ["incident"],
-        }
-    )
+    # Lookup: plan + response (no preprocessor LLM call in the new pipeline).
     llms["planner"].queue_tool(
         {
             "intent": "lookup",
-            "reasoning": "find INC0012345",
+            "reasoning": "find INC0012345 by number",
             "operations": [
                 {
                     "op": "find",
@@ -176,13 +168,13 @@ async def test_smoke_runs_three_categories_with_scripted_llms(
         }
     )
     llms["response"].queue_text("INC0012345 is in progress.")
-    # OOS: just preprocessor short-circuit
-    llms["preprocessor"].queue_tool(
+    # OOS: planner short-circuits; no responder call.
+    llms["planner"].queue_tool(
         {
             "intent": "out_of_scope",
-            "rewritten_query": "x",
-            "entity_mentions": [],
-            "relevant_entities": [],
+            "reasoning": "Translation request is not an ITSM query.",
+            "operations": [],
+            "confidence": 0.99,
         }
     )
 

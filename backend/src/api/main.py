@@ -24,17 +24,16 @@ async def _warm_up(container: Any) -> None:
     Lifespan returns instantly (health check passes), then this runs in the
     background. Users typically take 5-30s between page open and first query
     — by then warming is done. If a query arrives mid-warmup, the lazy
-    `build_index()` and `_ensure_embedded()` paths will block on the same
-    work; result is correct, just slower for that one query.
+    `build_index()` path will block on the same work; result is correct,
+    just slower for that one query.
+
+    Note: the old few-shot retriever is gone post-rewrite, so we only warm
+    the KB index now.
     """
     loop = asyncio.get_event_loop()
     try:
-        print("[warmup] starting (embedding model + KB index + few-shot)", flush=True)
+        print("[warmup] starting (embedding model + KB index)", flush=True)
         await loop.run_in_executor(None, container.kb_retriever.build_index)
-        # Also warm few-shot embeddings (uses the same model that's now loaded).
-        await loop.run_in_executor(
-            None, container.few_shot._ensure_embedded
-        )
         print(
             f"[warmup] complete · kb_size={container.kb_retriever.size}",
             flush=True,

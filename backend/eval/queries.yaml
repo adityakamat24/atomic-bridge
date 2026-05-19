@@ -432,3 +432,36 @@
   expected:
     intent: out_of_scope
   tags: [translation_request]
+
+# ============================================================
+# DECLARATIVE TRAVERSAL (new in the graph-as-executor rewrite)
+# Multi-hop walks emitted as a single `traverse to_entity=X path=[...]`
+# step rather than a chain of single-relation traverse ops.
+# ============================================================
+
+- id: decl_001
+  category: cross_reference
+  query: "KB articles relevant to incidents Ravi's team is handling"
+  expected:
+    intent: cross_reference
+    operations_required: [find, traverse, resolve]
+    answer_must_contain_one_of: ["KB0045678", "KB0045682"]
+  tags: [hero_example, three_hop_declarative, kb_category_bridge]
+
+- id: decl_002
+  category: cross_reference
+  query: "Open tickets raised by people in Engineering"
+  expected:
+    intent: cross_reference
+    operations_required: [find, traverse, resolve]
+    answer_must_contain_one_of: ["INC0012345", "INC0012349"]
+  tags: [single_hop_declarative, mid_hop_filter]
+
+- id: decl_003_ambiguous
+  category: edge_case
+  query: "Ravi's tickets"
+  expected:
+    intent: ambiguous
+    must_have_clarification: true
+    clarification_must_contain_one_of: ["raised", "assigned"]
+  tags: [bare_ambiguous, path_disambiguation_escalation]

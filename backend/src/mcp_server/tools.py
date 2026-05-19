@@ -1,24 +1,17 @@
 """MCP tool implementations.
 
-These are thin wrappers over the same internal services the FastAPI routes
-use (preprocessor, plan_generator, plan_validator, executor, response
-generator, write_path). The MCP server (`server.py`) calls these via its
-@tool decorators.
+Thin wrappers over the same internal services the FastAPI routes use.
+After the rewrite, the read pipeline is two LLM calls (Planner +
+Responder); the structured tools (get_incident, list_incidents,
+search_kb) bypass both and talk to the graph directly.
 
-We expose 6 tools (08-mcp-server.md):
+Six tools (08-mcp-server.md):
   - query_itsm: NL entry point
   - get_incident: structured lookup by number
   - list_incidents: structured search
   - search_kb: KB search
   - propose_write: build a write proposal
   - confirm_write: confirm or cancel a pending proposal
-
-Two design points worth surfacing:
-  1. NL + structured exposure mirrors Atomicwork's "ensemble AI" stance —
-     an MCP agent that already speaks ITSM doesn't need to round-trip
-     through our planner.
-  2. All errors come back as structured `{ok: false, error: {...}}` dicts so
-     MCP clients can render or programmatically recover.
 """
 
 from __future__ import annotations
@@ -28,9 +21,10 @@ from typing import Any
 
 from src.api.deps import AppContainer
 from src.core.data_store import Filter
+from src.core.trace import ExecutionError
 from src.guardrails.input_validator import InputRejected
 from src.planner.plan_validator import PlanValidationError
-from src.planner.preprocessor import PriorTurn
+from src.planner.planner import PriorTurn
 from src.write_path.executor import (
     ProposalConflict,
     ProposalExpired,
@@ -52,79 +46,82 @@ def _err(code: str, message: str, **details: Any) -> dict[str, Any]:
 
 
 async def query_itsm(
-    container: AppContainer, question: str, session_id: str | None = None
+    container: AppContainer, question: str, session_id: str | None = None,
 ) -> dict[str, Any]:
-    """Full NL pipeline. Returns answer + plan + trace."""
+    """Full NL pipeline. Two LLM calls (planner + responder) for read
+    queries; one LLM call (planner) for short-circuits and write
+    proposals. Mirrors api/routes/query.py."""
     t0 = time.perf_counter()
     try:
         validated = container.input_validator.validate(question)
     except InputRejected as exc:
         return _err("INPUT_REJECTED", str(exc))
 
-    prior = PriorTurn()
+    prior: PriorTurn | None = None
     if session_id:
         s = await container.session_store.get(session_id)
-        if s:
-            prior = PriorTurn(query=s.last_query, resolved_entities=s.last_resolved_entities)
+        if s and s.last_query:
+            prior = PriorTurn(
+                query=s.last_query,
+                resolved_entities=tuple(
+                    e.get("resolved_sys_id") or e.get("surface", "")
+                    for e in s.last_resolved_entities
+                    if isinstance(e, dict)
+                ),
+            )
 
-    pre = await container.preprocessor.process(validated.text, prior=prior)
-    if pre.intent == "out_of_scope":
-        return _ok(
-            {
-                "intent": "out_of_scope",
-                "answer": "I can only help with IT service questions.",
-                "latency_ms": int((time.perf_counter() - t0) * 1000),
-            }
+    try:
+        plan = await container.planner.plan(validated.text, prior_turn=prior)
+    except PlanValidationError as exc:
+        return _err(
+            "PLAN_VALIDATION_FAILED", "; ".join(exc.errors), errors=exc.errors,
         )
 
-    plan = await container.plan_generator.generate(
-        question=validated.text,
-        rewritten_query=pre.rewritten_query,
-        resolved_entities=pre.entity_mentions,
-        subgraph_ids=pre.relevant_entities or None,
-    )
-    try:
-        plan = container.plan_validator.validate(plan)
-    except PlanValidationError as exc:
-        return _err("PLAN_VALIDATION_FAILED", "; ".join(exc.errors), errors=exc.errors)
+    if plan.intent == "out_of_scope":
+        return _ok({
+            "intent": "out_of_scope",
+            "answer": "I can only help with IT service questions.",
+            "plan": plan.model_dump(),
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+        })
 
     if plan.intent == "ambiguous":
-        return _ok(
-            {
-                "intent": "ambiguous",
-                "answer": plan.clarification_needed,
-                "plan": plan.model_dump(),
-                "latency_ms": int((time.perf_counter() - t0) * 1000),
-            }
-        )
+        return _ok({
+            "intent": "ambiguous",
+            "answer": plan.clarification_needed,
+            "plan": plan.model_dump(),
+            "latency_ms": int((time.perf_counter() - t0) * 1000),
+        })
 
-    result = container.executor.execute(plan)
+    try:
+        result = await container.graph.execute_plan(
+            plan, query=validated.text,
+            scorer=container.relation_scorer,
+        )
+    except ExecutionError as exc:
+        return _err("EXECUTION_FAILED", str(exc))
 
     if plan.intent == "write_proposal" and result.output is not None:
         container.approval_store.put(result.output)
-        return _ok(
-            {
-                "intent": "write_proposal",
-                "write_proposal": result.output.model_dump(mode="json"),
-                "plan": plan.model_dump(),
-                "trace": result.trace.model_dump(),
-                "latency_ms": int((time.perf_counter() - t0) * 1000),
-            }
-        )
-
-    answer = await container.response_generator.generate(validated.text, result)
-    answer, leak_warnings = container.output_filter.scan_response_text(answer)
-    return _ok(
-        {
-            "intent": plan.intent,
-            "answer": answer,
-            "data": result.output,
+        return _ok({
+            "intent": "write_proposal",
+            "write_proposal": result.output.model_dump(mode="json"),
             "plan": plan.model_dump(),
             "trace": result.trace.model_dump(),
-            "warnings": result.warnings + leak_warnings,
             "latency_ms": int((time.perf_counter() - t0) * 1000),
-        }
-    )
+        })
+
+    answer = await container.responder.respond(validated.text, plan, result)
+    answer, leak_warnings = container.output_filter.scan_response_text(answer)
+    return _ok({
+        "intent": plan.intent,
+        "answer": answer,
+        "data": result.output,
+        "plan": plan.model_dump(),
+        "trace": result.trace.model_dump(),
+        "warnings": result.warnings + leak_warnings,
+        "latency_ms": int((time.perf_counter() - t0) * 1000),
+    })
 
 
 # ---------- get_incident ---------------------------------------------------
@@ -155,21 +152,32 @@ def list_incidents(
         filters.append(Filter(field="state", operator="in", value=list(state)))
     if priority:
         filters.append(
-            Filter(field="priority", operator="in", value=list(priority))
+            Filter(field="priority", operator="in", value=list(priority)),
         )
     if category:
         filters.append(Filter(field="category", operator="eq", value=category))
     if assignee_name:
-        cands = container.name_resolver.resolve(assignee_name)
-        if cands:
+        # Store-side fuzzy: use `contains` against the user table. No
+        # application-layer pre-indexed fuzzy matcher in the new design.
+        users = container.store.find(
+            "sys_user",
+            [Filter(field="name", operator="contains", value=assignee_name)],
+            limit=10,
+        )
+        if users:
             filters.append(
-                Filter(field="assigned_to", operator="in", value=[c.sys_id for c in cands])
+                Filter(
+                    field="assigned_to", operator="in",
+                    value=[u["sys_id"] for u in users],
+                )
             )
     rows = container.store.find("incident", filters, limit=limit)
     return _ok({"incidents": [_project_incident(container, r) for r in rows]})
 
 
-def _project_incident(container: AppContainer, rec: dict[str, Any]) -> dict[str, Any]:
+def _project_incident(
+    container: AppContainer, rec: dict[str, Any],
+) -> dict[str, Any]:
     g = container.graph
     out = {}
     for k, v in rec.items():
@@ -218,7 +226,7 @@ async def propose_write(
 
 
 def confirm_write(
-    container: AppContainer, token: str, confirm_flag: bool = True
+    container: AppContainer, token: str, confirm_flag: bool = True,
 ) -> dict[str, Any]:
     try:
         status, record = confirm(

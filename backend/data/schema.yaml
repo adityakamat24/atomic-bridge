@@ -253,6 +253,16 @@ relations:
     inverse_relation_id: sys_user.managesGroups
     description: "Identifies the manager of this team"
 
+  - id: sys_user.managesGroups
+    verb_phrase: "manages team"
+    inverse_verb_phrase: "team manager"
+    from_entity: sys_user
+    to_entity: sys_user_group
+    via_field: sys_user_group.manager
+    cardinality: one_to_many
+    inverse_relation_id: sys_user_group.managedBy
+    description: "Assignment groups this user manages, derived from the group's manager field."
+
   - id: incident.inCategory
     verb_phrase: "in category"
     inverse_verb_phrase: "incidents in category"

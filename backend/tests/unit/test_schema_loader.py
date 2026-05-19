@@ -21,9 +21,10 @@ def test_real_schema_loads_with_expected_node_counts() -> None:
     # as one that should be an edge).
     assert counts["entities"] == 5
     assert counts["value_maps"] == 2
-    # 9 original relations + 4 category bridge relations (incident↔category,
-    # kb_knowledge↔category, both directions).
-    assert counts["relations"] == 13
+    # 10 user/incident/group relations (every pair has a first-class inverse,
+    # including sys_user.managesGroups <-> sys_user_group.managedBy) + 4
+    # category bridge relations (incident<->category, kb_knowledge<->category).
+    assert counts["relations"] == 14
 
 
 def test_real_schema_field_counts_per_entity() -> None:
@@ -204,13 +205,11 @@ def test_loads_missing_file_raises() -> None:
 # ---------- Integrity --------------------------------------------------------
 
 
-def test_real_schema_integrity_only_flags_known_dangling_inverse() -> None:
+def test_real_schema_has_no_integrity_issues() -> None:
+    """Every relation declares a valid inverse, every field references a real
+    entity, every value_map referenced by a field exists. The shortest-path
+    declarative-traversal layer depends on this invariant: if a relation
+    were defined in one direction only, the engine could fail to find a
+    valid chain it could otherwise resolve from the inverse side."""
     g = load(REPO_DATA_SCHEMA)
-    issues = g.integrity_issues()
-    # The spec YAML defines `sys_user_group.managedBy` with
-    # inverse_relation_id `sys_user.managesGroups`, but never declares that
-    # inverse. We treat this as a known spec gap, surfaced (not raised).
-    assert issues == [
-        "relation sys_user_group.managedBy: inverse_relation_id "
-        "sys_user.managesGroups missing"
-    ]
+    assert g.integrity_issues() == []

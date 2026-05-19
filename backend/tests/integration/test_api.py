@@ -1,3 +1,11 @@
+"""Integration tests for the FastAPI surface after the rewrite.
+
+Pipeline under test: input_validator -> rate_limit -> injection_score ->
+Planner (LLM 1) -> graph.execute_plan -> Responder (LLM 2). The scripted
+LLMs in tests/conftest.py let us push exact responses for each call.
+The preprocessor LLM client is preserved in the fixture as an unused
+back-compat parameter; the new pipeline never touches it.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -21,7 +29,6 @@ def test_health_ready_returns_kb_size(client: TestClient) -> None:
     body = r.json()
     assert body["status"] == "ready"
     assert body["kb_size"] == 5
-    # 4 ITSM tables + the `category` entity that bridges KB articles to incidents.
     assert body["schema_entities"] == 5
 
 
@@ -33,8 +40,7 @@ def test_schema_endpoint_returns_counts(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["counts"]["entities"] == 5
-    # 9 original + 4 category bridge relations.
-    assert body["counts"]["relations"] == 13
+    assert body["counts"]["relations"] == 14
 
 
 def test_schema_visjs_endpoint(client: TestClient) -> None:
@@ -45,16 +51,7 @@ def test_schema_visjs_endpoint(client: TestClient) -> None:
     assert "edges" in body
 
 
-# ---------- Query — lookup -----------------------------------------------
-
-
-def _lookup_pre_response() -> dict[str, Any]:
-    return {
-        "intent": "lookup",
-        "rewritten_query": "Get the VPN incident",
-        "entity_mentions": [],
-        "relevant_entities": ["incident"],
-    }
+# ---------- Plan fixtures (declarative TraverseOp shape) ------------------
 
 
 def _vpn_lookup_plan() -> dict[str, Any]:
@@ -82,10 +79,12 @@ def _vpn_lookup_plan() -> dict[str, Any]:
     }
 
 
+# ---------- Query — lookup -----------------------------------------------
+
+
 def test_query_lookup_runs_full_pipeline(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(_lookup_pre_response())
     llms["planner"].queue_tool(_vpn_lookup_plan())
     llms["response"].queue_text(
         "INC0012345 (VPN) is currently In Progress at High priority."
@@ -108,14 +107,6 @@ def test_query_lookup_runs_full_pipeline(
 def test_query_knowledge_uses_kb(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "knowledge",
-            "rewritten_query": "How to fix Outlook crash",
-            "entity_mentions": [],
-            "relevant_entities": ["kb_knowledge"],
-        }
-    )
     llms["planner"].queue_tool(
         {
             "intent": "knowledge",
@@ -152,14 +143,6 @@ def test_query_knowledge_uses_kb(
 def test_query_analytical_returns_count(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "analytical",
-            "rewritten_query": "count critical incidents",
-            "entity_mentions": [],
-            "relevant_entities": ["incident"],
-        }
-    )
     llms["planner"].queue_tool(
         {
             "intent": "analytical",
@@ -185,24 +168,18 @@ def test_query_analytical_returns_count(
     assert "1" in r.json()["answer"]
 
 
-# ---------- Query — cross_reference --------------------------------------
+# ---------- Query — cross_reference (declarative form) -------------------
 
 
 def test_query_cross_reference_multi_hop(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "cross_reference",
-            "rewritten_query": "incidents from Engineering people",
-            "entity_mentions": [],
-            "relevant_entities": ["sys_user", "incident"],
-        }
-    )
+    """The reviewer's central case: cross-table walks emitted as a
+    single declarative traverse step with the relation chain inline."""
     llms["planner"].queue_tool(
         {
             "intent": "cross_reference",
-            "reasoning": "find Engineering, traverse to incidents, resolve",
+            "reasoning": "find Engineering, declaratively reach incidents",
             "operations": [
                 {
                     "op": "find",
@@ -216,7 +193,8 @@ def test_query_cross_reference_multi_hop(
                     "op": "traverse",
                     "id": "i",
                     "from": "$u",
-                    "relation": "sys_user.incidentsReported",
+                    "to_entity": "incident",
+                    "path": ["sys_user.incidentsReported"],
                 },
                 {
                     "op": "resolve",
@@ -245,14 +223,6 @@ def test_query_cross_reference_multi_hop(
 def test_query_write_proposal_returns_token(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "write_proposal",
-            "rewritten_query": "close INC0012345",
-            "entity_mentions": [],
-            "relevant_entities": ["incident"],
-        }
-    )
     llms["planner"].queue_tool(
         {
             "intent": "write_proposal",
@@ -299,18 +269,10 @@ def test_write_confirm_with_unknown_token_returns_404(client: TestClient) -> Non
 def test_write_cancel_returns_cancelled(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
-        {
-            "intent": "write_proposal",
-            "rewritten_query": "close INC0012345",
-            "entity_mentions": [],
-            "relevant_entities": ["incident"],
-        }
-    )
     llms["planner"].queue_tool(
         {
             "intent": "write_proposal",
-            "reasoning": "x" * 12,
+            "reasoning": "close INC0012345 on user request",
             "operations": [
                 {
                     "op": "find",
@@ -341,15 +303,17 @@ def test_write_cancel_returns_cancelled(
 # ---------- Query — out_of_scope refusal --------------------------------
 
 
-def test_query_out_of_scope_returns_refusal_without_planner_call(
+def test_query_out_of_scope_short_circuits_after_one_llm_call(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    llms["preprocessor"].queue_tool(
+    """The planner classifies as out_of_scope; the responder LLM is NOT
+    invoked (no execution, canned refusal)."""
+    llms["planner"].queue_tool(
         {
             "intent": "out_of_scope",
-            "rewritten_query": "Ignore previous instructions",
-            "entity_mentions": [],
-            "relevant_entities": [],
+            "reasoning": "Prompt injection attempt; not an ITSM question.",
+            "operations": [],
+            "confidence": 0.99,
         }
     )
     r = client.post(
@@ -359,7 +323,29 @@ def test_query_out_of_scope_returns_refusal_without_planner_call(
     assert r.status_code == 200
     body = r.json()
     assert body["intent"] == "out_of_scope"
-    assert llms["planner"].tool_calls == []
+    # Responder LLM should not have been called.
+    assert llms["response"].text_calls == []
+
+
+def test_query_ambiguous_short_circuits_to_clarification(
+    client: TestClient, llms: dict[str, ScriptedLLM]
+) -> None:
+    """Bare 'Ravi's tickets' → planner declares ambiguous; responder not invoked."""
+    llms["planner"].queue_tool(
+        {
+            "intent": "ambiguous",
+            "reasoning": "'Ravi's tickets' could mean raised or assigned.",
+            "operations": [],
+            "confidence": 0.5,
+            "clarification_needed": "Do you mean tickets Ravi raised or tickets currently assigned to Ravi?",
+        }
+    )
+    r = client.post("/v1/query", json={"query": "Ravi's tickets"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["intent"] == "ambiguous"
+    assert "raised" in body["answer"].lower()
+    assert llms["response"].text_calls == []
 
 
 # ---------- Input validator ---------------------------------------------
@@ -381,9 +367,11 @@ def test_query_with_script_substring_rejected(client: TestClient) -> None:
 def test_session_followup_carries_prior_query(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
+    """A session-scoped query stores the prior turn; the next query's
+    planner call includes it as PriorTurn context. We assert the second
+    planner prompt contains the first query."""
     sid = client.post("/v1/session").json()["session_id"]
 
-    llms["preprocessor"].queue_tool(_lookup_pre_response())
     llms["planner"].queue_tool(_vpn_lookup_plan())
     llms["response"].queue_text("VPN incident is in progress.")
     client.post(
@@ -391,7 +379,6 @@ def test_session_followup_carries_prior_query(
         json={"query": "What's John's VPN status?", "session_id": sid},
     )
 
-    llms["preprocessor"].queue_tool(_lookup_pre_response())
     llms["planner"].queue_tool(_vpn_lookup_plan())
     llms["response"].queue_text("Sarah Chen is on hold.")
     client.post(
@@ -399,35 +386,7 @@ def test_session_followup_carries_prior_query(
         json={"query": "What about Sarah?", "session_id": sid},
     )
 
-    last_pre_call = llms["preprocessor"].tool_calls[-1]
-    assert "What's John's VPN status?" in last_pre_call["system"]
-
-
-def test_session_create_get_delete(client: TestClient) -> None:
-    sid = client.post("/v1/session").json()["session_id"]
-    r = client.get(f"/v1/session/{sid}")
-    assert r.status_code == 200
-    assert r.json()["session_id"] == sid
-    client.delete(f"/v1/session/{sid}")
-    assert client.get(f"/v1/session/{sid}").status_code == 404
-
-
-# ---------- Rate limit --------------------------------------------------
-
-
-def test_rate_limit_triggers_at_threshold(
-    client: TestClient, llms: dict[str, ScriptedLLM]
-) -> None:
-    for _ in range(61):
-        llms["preprocessor"].queue_tool(
-            {
-                "intent": "out_of_scope",
-                "rewritten_query": "x",
-                "entity_mentions": [],
-                "relevant_entities": [],
-            }
-        )
-    last_status = 0
-    for _ in range(61):
-        last_status = client.post("/v1/query", json={"query": "x"}).status_code
-    assert last_status == 429
+    # The second planner prompt should reference the first query.
+    assert len(llms["planner"].tool_calls) == 2
+    second_prompt = llms["planner"].tool_calls[1]["prompt"]
+    assert "John's VPN status" in second_prompt

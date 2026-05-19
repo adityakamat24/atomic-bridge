@@ -1,3 +1,19 @@
+"""POST /v1/query — the natural-language entry point.
+
+Pipeline (steady state after the rewrite):
+
+  input_validator -> rate_limit -> injection_detector (advisory) ->
+  Planner (LLM #1) -> graph.execute_plan -> Responder (LLM #2) ->
+  output_filter scan -> audit log -> response.
+
+Short-circuits:
+  * intent=out_of_scope     -> canned refusal, no execution, no responder
+  * intent=ambiguous        -> clarification, no execution, no responder
+  * intent=write_proposal   -> execute, store proposal, return diff text;
+                              the responder is not invoked because the
+                              answer is a structured diff the frontend
+                              renders directly.
+"""
 from __future__ import annotations
 
 import time
@@ -9,9 +25,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from src.api.deps import AppContainer, get_container
 from src.api.rate_limit import RateLimitExceededError
 from src.api.types import QueryRequest, QueryResponse
+from src.core.trace import ExecutionError
 from src.guardrails.input_validator import InputRejected
 from src.planner.plan_validator import PlanValidationError
-from src.planner.preprocessor import PriorTurn
+from src.planner.planner import PriorTurn
 
 router = APIRouter(prefix="/v1")
 logger = structlog.get_logger(__name__)
@@ -40,72 +57,59 @@ async def submit_query(
     injection_score = container.injection_detector.score(validated.text)
 
     # Session-aware prior turn for pronoun resolution.
-    prior = PriorTurn()
+    prior: PriorTurn | None = None
     session = None
     if req.session_id:
         session = await container.session_store.get(req.session_id)
-        if session:
+        if session and session.last_query:
             prior = PriorTurn(
                 query=session.last_query,
-                resolved_entities=session.last_resolved_entities,
+                resolved_entities=tuple(
+                    e.get("resolved_sys_id") or e.get("surface", "")
+                    for e in session.last_resolved_entities
+                    if isinstance(e, dict)
+                ),
             )
 
+    # LLM call 1: planner.
     try:
-        pre_out = await container.preprocessor.process(validated.text, prior=prior)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("preprocessor_failed")
-        raise HTTPException(status_code=500, detail=f"preprocessor failed: {exc}") from exc
-
-    if pre_out.intent == "out_of_scope":
-        elapsed = int((time.perf_counter() - t0) * 1000)
-        await _audit(
-            container,
-            request_id,
-            req,
-            validated.text,
-            injection_score,
-            None,
-            "out_of_scope",
-            elapsed,
-        )
-        return QueryResponse(
-            request_id=request_id,
-            answer="I can only help with IT service questions about tickets, users, teams, and knowledge articles.",
-            intent="out_of_scope",
-            confidence=1.0,
-            latency_ms=elapsed,
-        )
-
-    try:
-        plan = await container.plan_generator.generate(
-            question=validated.text,
-            rewritten_query=pre_out.rewritten_query,
-            resolved_entities=pre_out.entity_mentions,
-            subgraph_ids=pre_out.relevant_entities or None,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("plan_generator_failed")
-        raise HTTPException(status_code=500, detail=f"plan generator failed: {exc}") from exc
-
-    try:
-        plan = container.plan_validator.validate(plan)
+        plan = await container.planner.plan(validated.text, prior_turn=prior)
     except PlanValidationError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": "plan_validation_failed", "errors": exc.errors},
         ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("planner_failed")
+        raise HTTPException(
+            status_code=500, detail=f"planner failed: {exc}",
+        ) from exc
 
+    # out_of_scope: canned refusal, no execution, no second LLM call.
+    if plan.intent == "out_of_scope":
+        elapsed = int((time.perf_counter() - t0) * 1000)
+        await _audit(
+            container, request_id, req, validated.text,
+            injection_score, plan, "out_of_scope", elapsed,
+        )
+        return QueryResponse(
+            request_id=request_id,
+            answer=(
+                "I can only help with IT service questions about tickets, "
+                "users, teams, and knowledge articles."
+            ),
+            plan=plan if req.show_plan else None,
+            intent="out_of_scope",
+            confidence=1.0,
+            latency_ms=elapsed,
+        )
+
+    # ambiguous: surface the planner's clarification; no execution.
     if plan.intent == "ambiguous":
         elapsed = int((time.perf_counter() - t0) * 1000)
         await _audit(
-            container,
-            request_id,
-            req,
-            validated.text,
-            injection_score,
-            plan,
-            "ambiguous",
-            elapsed,
+            container, request_id, req, validated.text,
+            injection_score, plan, "ambiguous", elapsed,
         )
         return QueryResponse(
             request_id=request_id,
@@ -117,31 +121,45 @@ async def submit_query(
             latency_ms=elapsed,
         )
 
+    # Everything else: run on the graph executor. execute_plan is async
+    # because the relation scorer (a third LLM ROLE on the response-side
+    # client) is invoked at execution time when the planner emits a
+    # declarative traverse with no explicit path AND multiple shortest
+    # chains exist between source and target.
+    try:
+        result = await container.graph.execute_plan(
+            plan,
+            query=validated.text,
+            request_id=request_id,
+            scorer=container.relation_scorer,
+        )
+    except ExecutionError as exc:
+        logger.exception("execute_plan_failed")
+        raise HTTPException(
+            status_code=500, detail=f"execution failed: {exc}",
+        ) from exc
+
+    # write_proposal: structured answer, no responder LLM call.
     if plan.intent == "write_proposal":
-        result = container.executor.execute(plan, request_id=request_id)
         proposal = result.output
         if proposal is not None:
             container.approval_store.put(proposal)
         elapsed = int((time.perf_counter() - t0) * 1000)
         await _audit(
-            container,
-            request_id,
-            req,
-            validated.text,
-            injection_score,
-            plan,
-            "write_proposed",
-            elapsed,
+            container, request_id, req, validated.text,
+            injection_score, plan, "write_proposed", elapsed,
         )
         diff_str = (
-            ", ".join(f"{k}: {v['from']!r} -> {v['to']!r}" for k, v in proposal.diff.items())
-            if proposal
-            else "(no proposal generated)"
+            ", ".join(
+                f"{k}: {v['from']!r} -> {v['to']!r}"
+                for k, v in proposal.diff.items()
+            )
+            if proposal else "(no proposal generated)"
         )
-        answer = f"Proposed change to {proposal.target_display if proposal else 'unknown'}: {diff_str}. Confirm to apply."
+        target = proposal.target_display if proposal else "unknown"
         return QueryResponse(
             request_id=request_id,
-            answer=answer,
+            answer=f"Proposed change to {target}: {diff_str}. Confirm to apply.",
             plan=plan if req.show_plan else None,
             trace=result.trace if req.show_trace else None,
             intent="write_proposal",
@@ -151,36 +169,36 @@ async def submit_query(
             latency_ms=elapsed,
         )
 
-    # READ PATH ----------------------------------------------------------
-    result = container.executor.execute(plan, request_id=request_id)
-
-    # PII filter on each record (defence-in-depth; validator already stripped).
+    # Read path: PII filter the data, then LLM call 2 (responder).
     data: Any = result.output
     if isinstance(data, list):
-        data = [_filter_record(container, r, _record_entity(plan)) for r in data]
+        data = [
+            _filter_record(container, r, _record_entity(plan)) for r in data
+        ]
 
-    answer = await container.response_generator.generate(validated.text, result)
+    answer = await container.responder.respond(validated.text, plan, result)
     answer, leak_warnings = container.output_filter.scan_response_text(answer)
     if leak_warnings:
         result.warnings.extend(leak_warnings)
 
     elapsed = int((time.perf_counter() - t0) * 1000)
     await _audit(
-        container,
-        request_id,
-        req,
-        validated.text,
-        injection_score,
-        plan,
-        "read_ok",
-        elapsed,
+        container, request_id, req, validated.text,
+        injection_score, plan, "read_ok", elapsed,
     )
 
+    # Session update for pronoun resolution next turn.
     if req.session_id and session:
         await container.session_store.update(
             req.session_id,
             last_query=validated.text,
-            last_resolved_entities=[m.model_dump() for m in pre_out.entity_mentions],
+            # Store just the entity IDs the plan touched, derived from
+            # find ops. Saves us from carrying every record through.
+            last_resolved_entities=[
+                {"surface": op.entity, "resolved_sys_id": ""}
+                for op in plan.operations
+                if hasattr(op, "entity")
+            ],
             last_plan=plan,
             last_response=answer,
             turn_count=session.turn_count + 1,
@@ -200,8 +218,9 @@ async def submit_query(
 
 
 def _record_entity(plan: object) -> str:
-    """Best-effort: pick the first FindOp's entity. Used only for the
-    output filter's per-record sensitivity check."""
+    """Best-effort: pick the first FindOp's entity for the per-record
+    output filter. Multi-entity plans will use whichever entity matched
+    first; the filter is permissive (skips unknown fields)."""
     ops = getattr(plan, "operations", [])
     for op in ops:
         if getattr(op, "op", None) == "find":
@@ -209,12 +228,16 @@ def _record_entity(plan: object) -> str:
     return ""
 
 
-def _filter_record(container: AppContainer, record: dict[str, Any], entity: str) -> dict[str, Any]:
+def _filter_record(
+    container: AppContainer, record: dict[str, Any], entity: str,
+) -> dict[str, Any]:
     if not isinstance(record, dict):
         return record
     if not entity:
-        # Just strip sys_id-like fields
-        return {k: v for k, v in record.items() if not (k == "sys_id" or k.endswith("_sys_id"))}
+        return {
+            k: v for k, v in record.items()
+            if not (k == "sys_id" or k.endswith("_sys_id"))
+        }
     return container.output_filter.filter_record(record, entity)
 
 
@@ -235,7 +258,9 @@ async def _audit(
             "session_id": req.session_id,
             "user_query": text,
             "injection_score": injection_score,
-            "plan": getattr(plan, "model_dump", lambda: None)() if plan else None,
+            "plan": (
+                getattr(plan, "model_dump", lambda: None)() if plan else None
+            ),
             "outcome": outcome,
             "latency_ms": latency_ms,
         }

@@ -60,7 +60,7 @@ export function MessageInput({
             onClick={submit}
             disabled={disabled || !text.trim()}
             aria-label="Send"
-            className="flex h-7 w-7 items-center justify-center rounded border border-line text-fg-3 transition hover:border-accent-line hover:bg-accent-soft hover:text-accent disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-transparent disabled:hover:text-fg-3"
+            className="flex h-7 w-7 items-center justify-center rounded border border-line text-fg-3 transition hover:border-brand-line hover:bg-brand-soft hover:text-brand disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-transparent disabled:hover:text-fg-3"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 12h14" />
@@ -70,7 +70,9 @@ export function MessageInput({
         </div>
         <div className="mt-2 px-1 text-2xs text-fg-4 font-mono">
           enter ↵ to send · shift+enter for newline
-          {disabled && <span className="ml-2 text-accent">· processing</span>}
+          {disabled && (
+            <span className="ml-2 text-brand">· Atom is planning…</span>
+          )}
         </div>
       </div>
     </div>

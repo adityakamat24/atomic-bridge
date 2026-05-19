@@ -4,22 +4,22 @@ A natural-language layer over a ServiceNow-shaped IT data model. Built as the At
 
 ## The fastest way to evaluate this
 
-**The system is hosted. You don't need to clone, install, or run anything.** Open the live demo and start typing:
+The system is hosted, so you don't need to clone, install, or run anything. Open the live demo and start typing:
 
 > **Live demo: https://atomic-bridge.vercel.app/**
 
 - **Backend API:** https://itsm-bridge-backend.fly.dev (FastAPI, health at `/health`)
 - **MCP SSE endpoint:** https://itsm-bridge-backend.fly.dev:8001/sse (six tools, ready for any MCP client)
 
-Suggested starter queries in the demo cover all four query categories the PDF asks about. Local setup instructions are at the bottom if you want them, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
+The starter gallery in the demo covers the four query categories the PDF asks about, plus the trickier ones (a 3-hop walk, an ambiguous bare-name query, a self-relation walk for "Ravi's manager", and the HITL write flow). Local setup is at the bottom if you want it, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
 
-> The live demo runs in **admin view**. Every session has full read access across all tables, can see every field (including ones flagged sensitive in the schema), and can propose write changes to any incident. Per-user scoping is called out in [What I'd do differently](#what-id-do-differently).
+> The live demo runs in **admin view**. Every session has full read access across every table, sees every field (including ones flagged sensitive in the schema), and can propose write changes to any incident. Per-user scoping is in [What I'd do differently](#what-id-do-differently).
 
 ServiceNow stores IT data with `sys_id` references, integer-coded statuses, and field names like `assignment_group`. The user thinks in employees, tickets, severity, teams. This is the layer that translates between the two, plans the work as a structured operation list, and only then executes against the data.
 
 ## Stack
 
-Backend is Python 3.12 with FastAPI, Pydantic v2, NetworkX, FAISS, sentence-transformers, and the official `mcp` SDK. Frontend is Next.js 14 with Tailwind and vis-network. LLMs are Anthropic Claude by default and OpenAI as an alternate, both behind one Protocol. Deploys to Vercel for the frontend and Fly.io for the backend (one container, two services: FastAPI on 8000, MCP SSE on 8001).
+Backend is Python 3.12 with FastAPI, Pydantic v2, NetworkX, FAISS, sentence-transformers, and the official `mcp` SDK. Frontend is Next.js 14 with Tailwind and vis-network. LLMs are Anthropic Claude by default and OpenAI as the alternate, both behind one Protocol. Deploys go to Vercel for the frontend and Fly.io for the backend (one container, two services: FastAPI on 8000, MCP SSE on 8001).
 
 ## Setup
 
@@ -43,9 +43,9 @@ uv pip install --python .venv/Scripts/python.exe -e ".[dev]"   # mac/linux: .ven
 cd frontend && npm install && npm run dev
 ```
 
-The first run downloads ~80MB of `all-MiniLM-L6-v2` weights into `~/.cache/huggingface`. After that it's cold-to-ready in about 2 seconds.
+The first run downloads about 80MB of `all-MiniLM-L6-v2` weights into `~/.cache/huggingface`. After that it's cold-to-ready in about 2 seconds.
 
-If you have an Anthropic key you can run the full eval (~$0.50 in credits). Without one, the smoke subset and all unit and integration tests run free.
+If you have an Anthropic key you can run the full eval (~$0.50 in credits). Without one, the smoke subset and all unit/integration tests run free.
 
 ---
 
@@ -55,9 +55,9 @@ The PDF asks for four things in the design write-up: how the graph schema is lai
 
 ## The graph
 
-The schema lives in `backend/data/schema.yaml` and gets loaded once at startup into a `networkx.MultiDiGraph`. Five entity types: `incident`, `sys_user`, `sys_user_group`, `kb_knowledge`, and `category`. Two value maps (one each for `state` and `priority`). Thirteen relations.
+The schema lives in `backend/data/schema.yaml` and gets loaded once at startup into a `networkx.MultiDiGraph`. Five entity types (`incident`, `sys_user`, `sys_user_group`, `kb_knowledge`, `category`). Two value maps (one each for `state` and `priority`). Fourteen relations, and every relation has a first-class inverse. A schema invariant test guards future YAML edits.
 
-There are four kinds of node. **Entities** are tables. **Fields** are columns; each carries display name, data type, an optional sensitivity flag, and an optional `references` pointer (so `incident.caller_id` points at `sys_user`). **ValueMaps** are the integer-to-label dictionaries, modeled as first-class nodes rather than buried as constants somewhere, so the LLM can see the mapping when it reads the schema. **Relations** are named, directional, semantic verbs between two entities.
+There are four kinds of node. **Entities** are tables. **Fields** are columns: each carries a display name, a data type, an optional sensitivity flag, and an optional `references` pointer (so `incident.caller_id` points at `sys_user`). **ValueMaps** are the integer-to-label dictionaries, modeled as first-class nodes rather than buried as constants somewhere, so the LLM can see the mapping when it reads the schema. **Relations** are named, directional, semantic verbs between two entities.
 
 A Relation looks like this in YAML:
 
@@ -71,7 +71,11 @@ cardinality: many_to_one
 inverse_relation_id: sys_user.incidentsReported
 ```
 
-The planner sees `verb_phrase`. The executor walks `via_field`. Neither layer knows what the other knows. The Relation node is the bridge between them, and that separation is the central architectural claim of the prototype.
+The planner sees `verb_phrase`. The executor walks `via_field`. Neither layer knows what the other knows, and the Relation node is the bridge between them. That separation is the central architectural claim of the system.
+
+### The graph IS the executor
+
+`SchemaGraph` is not just metadata. It owns the data store and the KB retriever (attached via `bind_runtime(store, kb)`) and exposes the execution methods directly: `find`, `walk`, `aggregate`, `resolve`, `kb_search`, `propose_write`, plus an `execute_plan` dispatcher that walks a `QueryPlan` op by op. There is no separate executor module. The plan is a script over the graph's functions, and the runtime "graph-ness" (shortest-path enumeration, chain validation, per-hop filters, ranked fallback) happens where the work happens, not in a flat config consulted at planning time.
 
 Six edge types tie everything together. `HAS_FIELD` connects an entity to its columns. `MAPS_THROUGH` connects a field to its value map. `VIA` connects a relation to the field that physically implements it. `FROM` and `TO` connect a relation to its two endpoints. `INVERSE_OF` connects a relation to its dual.
 
@@ -83,34 +87,40 @@ The PDF specifically calls out three relationships that "should be edges":
 
 The third one is worth a paragraph. `Category` is a first-class entity with one trick: the `sys_id` of each Category record is the category name itself (`"Network"`, `"Software"`, etc.). That means an existing `incident.category="Network"` already references the right record. No data files changed, only `schema.yaml` and a derived `categories.json`. The bridge is a real graph walk: `kb → category → incidents in that category`. Test: `test_kb_to_incidents_via_category_bridge`.
 
-### How the graph gets traversed
+### How traversal happens
 
-At planning time, the planner is given a markdown serialization of the schema produced by `SchemaGraph.to_llm_context()`. The preprocessor returns a list of `relevant_entities` based on the user's question, and the plan generator runs `expand_subgraph(seeds, max_hops=2)` over the relation graph in both directions before serializing. Without that expansion the planner only sees the entities the preprocessor directly named. If the preprocessor returned `[sys_user]` for "Ravi's team", the planner wouldn't see `sys_user_group` in its context and couldn't emit `incident.handledBy`. At our scale of 5 entities the BFS expansion is effectively a no-op, but at 50+ tables it's the only way to keep the planner's context tractable without giving up reachability.
+At planning time the planner is given a markdown serialization of the schema, produced by `SchemaGraph.to_llm_context()`. The planner emits a declarative traverse op that names the *target* entity plus the relation chain it wants to walk. At execution time, `SchemaGraph.walk` calls into the data store along that chain, applying per-entity filters at the hop where each filter's target entity appears.
 
-At execution time, the engine walks Relation nodes directly. The traverse handler reads `cardinality` and decides whether to gather sys_ids and call `store.get_many`, or do the inverse path with `store.find(target_entity, [Filter on via_field in source_ids])`. The handler has zero semantic knowledge. It doesn't know that "manages" means anything. Knowing what verb to walk was the planner's job; following an edge is all the executor does.
+When the planner is genuinely unsure which of several shortest chains is the right one, it can leave the chain off and let the engine ask the response-side LLM to rank the candidates. The engine walks the ranking; if the top-ranked chain returns zero records, it falls back to the next-ranked, capped at four attempts. Every chain it tried lands in the trace, so a user can see exactly what happened and why a particular result came back.
+
+The executor itself has zero semantic knowledge. It doesn't know that "manages" means anything. Knowing what verb to walk was the planner's job. Following an edge is all the executor does.
 
 ## The planner
 
-Three agents. Preprocessor and plan generator are each one LLM call. The validator is pure Python.
+Two LLM calls total: Planner and Responder. No preprocessor, no few-shot library, no application-layer name index. The planner makes one privileged tool call. The responder makes one quarantined text call.
 
-**Preprocessor.** Classifies intent into one of seven values (`lookup`, `knowledge`, `analytical`, `cross_reference`, `write_proposal`, `ambiguous`, `out_of_scope`). Extracts entity mentions. Resolves pronouns against the prior turn. Returns the relevant subgraph.
+**Planner** (`backend/src/planner/planner.py`). One LLM call. Receives the schema markdown, an optional prior turn for pronoun resolution, and the user query. Emits a `QueryPlan` via tool use, schema-constrained by Pydantic. Six op types: `find`, `traverse`, `aggregate`, `kb_lookup`, `resolve`, `write_proposal`. Each op has an `id` that later ops reference as `$id`. Name lookups go through the data store via `find sys_user filters=[name contains "..."]`, so there's no application-layer fuzzy index that doesn't scale past 10k users.
 
-Before the LLM call, a deterministic `NameResolver` runs and pre-attaches candidate matches to the prompt (fuzzy match on user names, including a token-prefix tier so "John D." matches "John Doe"). The LLM disambiguates rather than recalls. After the LLM call, a post-processing step enriches every resolved `sys_user` mention with `department`, `location`, `direct_reports`, and `groups_managed` from the data store. The planner uses those fields to pick the right relation for ambiguous possessives like "X's tickets" or "X's team".
+The planner emits the declarative `traverse` shape: `to_entity` (the target entity), `path` (the relation chain), and `filters_by_entity` (mid-hop filters keyed by entity). It picks the path among the shortest chains based on the verb phrases in the schema. When the user's wording is genuinely ambiguous, the planner sets `intent=ambiguous` and surfaces a clarification rather than guessing.
 
-**Plan generator.** One LLM call via tool use. The output is a `QueryPlan`, schema-constrained by Pydantic. Six op types: `find`, `traverse`, `aggregate`, `kb_lookup`, `resolve`, `write_proposal`. Each op has an `id` that later ops reference as `$id`. Few-shot examples are retrieved by query-embedding similarity from a YAML library.
+**Plan validator.** Pure Python. Verifies every entity, field, and relation in the plan exists. Verifies every `$var` reference is defined upstream. Runs `graph.validate_path` on every declarative traverse and rejects any chain that doesn't connect, doesn't end at `to_entity`, references an invented relation, or is longer than `MAX_PATH_HOPS=4`. Enforces resource limits (`MAX_OPERATIONS=10`, `MAX_TRAVERSE_OPS=5`). Also transforms the plan: filter values for value-mapped fields are converted display to code (`"In Progress"` becomes `2`), and sensitive fields are stripped from `resolve.fields` unless the session has `view_pii`. Rejection is hard. The API returns a 400 with the validator errors. No silent retry, because retries hide injection attempts.
 
-**Plan validator.** Pure Python. Verifies every entity, field, and relation in the plan exists. Verifies every `$var` reference is defined upstream. Enforces resource limits. Rejects plans where `write_proposal` isn't the last op. It also *transforms* the plan: filter values for value-mapped fields are converted from display strings to integer codes (`"In Progress"` to `2`), and `is_sensitive` fields are stripped from `resolve.fields` unless the session has `view_pii`. Rejection is hard. The API returns a 400 with the validator errors. No silent retry, because retries hide injection attempts.
-
-A worked plan for *"Show me incidents raised by people in Engineering":*
+A worked plan for *"Show me open incidents raised by people in Engineering":*
 
 ```json
 {
   "intent": "cross_reference",
-  "reasoning": "Find Engineering users, traverse the incidentsReported relation, resolve.",
+  "reasoning": "Find Engineering users, declaratively reach open incidents via the reported chain.",
   "operations": [
     {"op": "find", "id": "u", "entity": "sys_user",
      "filters": [{"field": "department", "operator": "eq", "value": "Engineering"}]},
-    {"op": "traverse", "id": "i", "from": "$u", "relation": "sys_user.incidentsReported"},
+    {"op": "traverse", "id": "i", "from": "$u",
+     "to_entity": "incident",
+     "path": ["sys_user.incidentsReported"],
+     "filters_by_entity": {
+       "incident": [{"field": "state", "operator": "in",
+                     "value": ["New", "In Progress", "On Hold"]}]
+     }},
     {"op": "resolve", "id": "out", "source": "$i",
      "fields": ["number", "state", "priority"], "include_relations": ["reportedBy"]}
   ],
@@ -119,25 +129,39 @@ A worked plan for *"Show me incidents raised by people in Engineering":*
 }
 ```
 
+The reviewer's hero example, *"KB articles relevant to incidents Ravi's team is handling"*, becomes a single declarative traverse with a 3-hop path:
+
+```json
+{"op": "traverse", "id": "kb", "from": "$u",
+ "to_entity": "kb_knowledge",
+ "path": ["sys_user.incidentsAssigned",
+          "incident.inCategory",
+          "category.kbArticlesInCategory"]}
+```
+
+The engine resolves the chain. The validator confirms it's a shortest path. The trace records the full chain end to end.
+
+**Responder** (`backend/src/response/responder.py`). One LLM call. Receives the user's query, the plan, and the executor's outputs. Writes the answer in plain English. The responder has no tools and no access to anything beyond what the executor returned, so it can't reach back into the database under its own authority. Defended by spotlighting and sandwich prompting against injection that rides in on user-visible record fields.
+
 ### Why a plan, not a tool-call loop
 
-Two reasons primarily, and a third worth mentioning. A plan is inspectable, so the frontend renders it before the answer arrives and the user can see what the system decided to do. It's replayable, so the eval suite can match on substrings without flake because the same plan against the same data is deterministic. The third reason is that a plan is replaceable: a fine-tuned classifier could emit the same JSON shape tomorrow and nothing downstream would care. None of that is true for a tool-call loop, where the model's choices are scattered across multiple turns and only legible through trace logs.
+A plan is inspectable, so the frontend renders it before the answer arrives and the user sees what the system decided to do. It's replayable, so the eval suite can match on substrings without flake (the same plan against the same data is deterministic). And it's replaceable: a fine-tuned classifier could emit the same JSON shape tomorrow and nothing downstream would care. None of that is true for a tool-call loop, where the model's choices are scattered across multiple turns and only legible through trace logs.
 
-### Role-aware disambiguation
+### Ambiguous-when-uncertain
 
-Phrases like "X's tickets" and "X's team" are ambiguous against the data. End users (John Doe in Engineering) are callers of their own incidents. IT-side users (Ravi in IT Support, Priya in IT Support, Mike in Facilities) never raise tickets, they handle them. Managers (Deepak, Alex) often have no assignments at all.
+Phrases like "X's tickets" without a verb are genuinely ambiguous against this schema. Both `sys_user.incidentsReported` (caller) and `sys_user.incidentsAssigned` (assignee) are 1-hop chains from `sys_user` to `incident`. An earlier design tried to disambiguate by looking up the user's `department` and applying a hard-coded rule (IT-side users got the assignee chain, everyone else got the caller chain). It silently broke for half the users.
 
-The preprocessor handles this by enriching every resolved `sys_user` mention with `department`, `location`, `direct_reports`, and `groups_managed`. The plan-generator prompt then picks the relation from those fields. "X's tickets" routes to `sys_user.incidentsReported` for end users and `sys_user.incidentsAssigned` for IT staff. "X's team" has a three-way dispatch: `groups_managed > 0` walks `sys_user.managesGroups` (Deepak's case, since he manages all five assignment groups), `direct_reports > 0` with no managed groups walks `sys_user.manages` (Alex's case, five direct reports but no group ownership), everything else walks `sys_user.incidentsAssigned` then `incident.handledBy` (the staff case). Each branch has a few-shot example.
+The new design doesn't guess. The planner sets `intent=ambiguous` with a clarification ("Do you mean tickets Ravi raised, or tickets currently assigned to Ravi?"). When the user's wording IS qualified, with verbs like "raised", "reported", "submitted" on one side and "assigned to", "working on", "handling" on the other, the planner picks the matching chain confidently. The frontend renders the clarification as click-able buttons so the user picks one without retyping.
 
 ## Trade-offs in graph representation
 
-Three approaches were on the table.
+Three options were on the table.
 
-**Neo4j with the LLM emitting Cypher.** The most authentic option. The LLM emits Cypher, Neo4j handles join planning, you get a real query language for free. I ruled it out for three reasons. First, Cypher injection is harder to gate than a structured plan. The validator I wrote is around 250 lines of Pydantic and dispatch; equivalent Cypher analysis would be a small static analyzer in its own right. Second, Neo4j adds a service to deploy and a license to track for a take-home that doesn't need either. Third, and the decisive one, I wanted the schema to live in the application process so it could be loaded from YAML, traversed deterministically by Python, and tested by reading objects rather than running queries. Neo4j would push schema knowledge into a database, which is the wrong locus of control for a prototype meant to make the schema *easy to reason about*.
+**Neo4j with the LLM emitting Cypher.** The most authentic option. The LLM emits Cypher, Neo4j handles join planning, you get a real query language for free. I ruled it out for three reasons. Cypher injection is harder to gate than a structured plan. The validator I wrote is about 250 lines of Pydantic and dispatch; equivalent Cypher analysis would be a small static analyzer in its own right. Neo4j also adds a service to deploy and a license to track for a take-home that doesn't need either. The decisive reason though was that I wanted the schema to live in the application process so it could be loaded from YAML, traversed deterministically by Python, and tested by reading objects rather than running queries. Neo4j would push schema knowledge into a database, which is the wrong locus of control for a prototype meant to make the schema *easy to reason about*.
 
-**A plain adjacency dict.** What I started with. Looked like `{entity: {relation_name: target_entity}}`. Worked for one-hop. Broke when I needed to ask, "what's the cardinality of this relation in the reverse direction?", the kind of question that needs relation metadata, not just topology. I could have added a parallel `relations_meta` dict and a `field_meta` dict and a `value_maps` dict, but at some point you've reinvented a graph library and done it badly.
+**A plain adjacency dict.** What I started with. Looked like `{entity: {relation_name: target_entity}}`. Worked for one hop. Broke when I needed to ask "what's the cardinality of this relation in the reverse direction?", the kind of question that needs relation metadata, not just topology. I could have added a parallel `relations_meta` dict and a `field_meta` dict and a `value_maps` dict, but at some point you've reinvented a graph library and done it badly.
 
-**NetworkX `MultiDiGraph`.** Where I landed. It gives directed edges with typed attributes, parallel edges between the same node pair (useful for the `INVERSE_OF` edges that share endpoints with the relations they invert), and a BFS primitive used for `shortest_relation_path` and `expand_subgraph`. It's in-process: no service to deploy, no migrations, nothing to operate. The cost is that the graph isn't queryable in a structured language. You can't hand a reviewer a Cypher query and say "this is what the planner does." Instead the (filtered) graph is serialized to a markdown blob via `to_llm_context()` and passed to the LLM. That serialization step is the main thing I'd revisit if the graph needed to scale past 50 tables. At that point the planner's context window starts to matter and a retrieval-based subgraph selection would sit on top of the structural BFS expansion.
+**NetworkX `MultiDiGraph`.** Where I landed. Directed edges with typed attributes, parallel edges between the same node pair (useful for `INVERSE_OF` edges that share endpoints with the relations they invert), and a BFS primitive used for `shortest_relation_paths` and `validate_path`. It's in-process: no service to deploy, no migrations, nothing to operate. The cost is that the graph isn't queryable in a structured language. You can't hand a reviewer a Cypher query and say "this is what the planner does." Instead the (filtered) graph gets serialized to a markdown blob via `to_llm_context()` and passed to the LLM. That serialization step is the main thing I'd revisit if the graph needed to scale past 50 tables. At that point the planner's context window starts to matter and a retrieval-based subgraph selection would sit on top of the structural enumeration.
 
 A practical consequence of choosing in-process NetworkX is that the whole stack is one container. The backend cold-starts in about 2 seconds. The schema is a YAML file. Adding a new ITSM table is a YAML edit, demonstrated mechanically by `test_adding_entity_to_yaml_is_reflected_without_code_changes`. That test parses the production schema, appends a new `change_request` entity, reloads, and asserts it appears in the planner's prompt. No Python changed.
 
@@ -145,9 +169,9 @@ A practical consequence of choosing in-process NetworkX is that the whole stack 
 
 A few items, ranked by what would move the needle most.
 
-**Stronger grounding on the response side.** The response generator is well-defended by the Dual LLM separation (planner can't see data, response generator has no tools) and by spotlighting and sandwich prompting. The grounding check itself is regex-based: it scans the response for invented INC and KB numbers and sys_ids that aren't in the executor's outputs. That catches the obvious cases but would miss a hallucinated user name like "John Smith" if the actual data only had "John Doe." The right pattern is extracting entity references from the response and verifying each one against the executor's outputs.
+**Stronger grounding on the response side.** The responder is well-defended by the Dual LLM separation (planner has tools but no data, responder has data but no tools) and by spotlighting and sandwich prompting. The grounding check itself is regex-based: it scans the response for invented INC and KB numbers and sys_ids that aren't in the executor's outputs. That catches the obvious cases but would miss a hallucinated user name like "John Smith" if the actual data only had "John Doe". The right pattern is extracting entity references from the response and verifying each one against the executor's outputs.
 
-**Category as a hierarchy, not a flat list.** Right now `Category` has no parent/child relations. In a real ServiceNow instance categories tree (Cloud Services → AWS → S3). Adding that is a single self-referential relation on the entity, but doing it well means rethinking how the KB retriever does category matching when the user mentions a parent and you want children too.
+**Category as a hierarchy, not a flat list.** Right now `Category` has no parent/child relations. In a real ServiceNow instance categories tree (Cloud Services > AWS > S3). Adding that is a single self-referential relation on the entity, but doing it well means rethinking how the KB retriever does category matching when the user mentions a parent and you want children too.
 
 **Table inheritance.** ServiceNow uses single-table inheritance heavily (`task` is the parent of `incident`, `problem`, `change_request`). My schema is flat. A real production extension would need an `INHERITS_FROM` edge type and an executor that understands a query on `task` should fan out across children. Out of scope for a prototype, but it's the schema change that matters most when scaling beyond a single table type.
 
@@ -161,29 +185,29 @@ A few items, ranked by what would move the needle most.
 
 # Fallbacks and limits
 
-**Cross-provider LLM fallback.** Every LLM client is wrapped in a `FallbackLLMClient` when both API keys are set. The primary provider (Anthropic by default) runs first. On a terminal failure after its retry loop is exhausted (the OpenAI API has a 12-minute outage, Anthropic is silently dropping requests, etc.), the secondary provider runs the same call once. `LLMToolCallMissingError` is explicitly *not* failed over because it signals a planner-prompt bug rather than a provider issue, and switching models would mask the real cause. Toggle with `LLM_ENABLE_FALLBACK`. See `backend/src/llm/fallback.py` and the four tests in `test_llm.py` under "Fallback wrapping".
+**Cross-provider LLM fallback.** Every LLM client is wrapped in a `FallbackLLMClient` when both API keys are set. The primary provider (Anthropic by default) runs first. On a terminal failure after its retry loop is exhausted (a 12-minute OpenAI outage, Anthropic silently dropping requests, etc.), the secondary provider runs the same call once. `LLMToolCallMissingError` is explicitly *not* failed over because it signals a planner-prompt bug rather than a provider issue, and switching models would mask the real cause. Toggle with `LLM_ENABLE_FALLBACK`. See `backend/src/llm/fallback.py` and the four tests in `test_llm.py` under "Fallback wrapping".
 
 **Retry with exponential backoff and jitter.** `LLMRateLimitError` and `LLMTransientError` (which wraps `APITimeoutError`, `APIConnectionError`, and `InternalServerError` from both SDKs) are retried up to 3 times with delays of 1, 2, and 4 seconds plus 25% jitter. Capped at 16s per attempt. Other LLM errors propagate immediately so the request fails fast rather than hanging the client. See `backend/src/llm/retry.py`.
 
 **Token-bucket rate limiting.** 60 requests per minute per client IP, configurable via `RATE_LIMIT_PER_MIN`. Returns HTTP 429 with a clear reason. See `backend/src/api/rate_limit.py`.
 
-**Session TTL.** Conversation context expires after 30 minutes of inactivity (`SESSION_TTL_SECONDS=1800`). Sessions are an in-memory ring buffer of recent turns; the preprocessor consumes the prior turn to resolve pronouns.
+**Session TTL.** Conversation context expires after 30 minutes of inactivity (`SESSION_TTL_SECONDS=1800`). Sessions are an in-memory ring buffer of recent turns; the planner consumes the prior turn to resolve pronouns.
 
 **Write-proposal expiry and optimistic locking.** Proposals expire after 10 minutes (`PROPOSAL_TTL_SECONDS=600`). On confirm, the handler re-fetches the target and checks `sys_updated_on` against the snapshot taken at propose time. If another write landed in between, the confirm fails with a clean conflict and the user re-issues the proposal. No silent overwrites.
 
 **Hash-chained audit log.** Every request is appended to an NDJSON log with `sha256(prev_hash + entry)` chaining. Tampering anywhere in the chain breaks every subsequent hash. Verified across 100 sequential entries by `test_guardrails.py`.
 
-**Input validation, fail-fast.** Length cap (5000 chars), Unicode NFKC normalization, banned-substring scan, and an advisory injection-pattern detector (scores but doesn't block, since the Dual LLM separation is the real defense). Bad input returns HTTP 400 before any LLM is touched.
+**Input validation, fail-fast.** Length cap (5000 chars), Unicode NFKC normalization, banned-substring scan, and an advisory injection-pattern detector (it scores but doesn't block, since the Dual LLM separation is the real defense). Bad input returns HTTP 400 before any LLM is touched.
 
 **Lazy ML loading.** The sentence-transformer model and FAISS KB index are not loaded in the request path. The model loads on first `embed()` call and the index builds on first `search()`. A FastAPI lifespan background task preloads both 5 to 15 seconds after boot, so the first real request never pays the warmup cost. The `/health` endpoint returns in about 2 seconds while warmup is still in flight.
 
-**Reference-resolver cache.** `ReferenceResolver` memoizes `(entity, sys_id) → record` lookups for the lifetime of a single request. A query that resolves the same user across 10 incidents pays one lookup, not 10.
+**Reference-resolver cache.** `(entity, sys_id) → record` lookups are memoized for the lifetime of a single request. A query that resolves the same user across 10 incidents pays one lookup, not 10.
 
 **MCP transport security with deployment-hostname allowlist.** The MCP SDK auto-applies a localhost-only DNS-rebinding protection layer by default, which 421s every request behind a TLS proxy. The server is configured with an explicit `MCP_ALLOWED_HOSTS` list that includes the Fly hostname, with a regression test covering both the enabled and disabled cases.
 
 **Structured logs.** Every request gets a request ID propagated through structlog. The frontend echoes it back via the trace inspector so a user reporting a bad answer can give an exact log handle.
 
-**Quality gate on every push.** CI runs ruff, mypy strict, the 285-test suite, and the 3-query eval smoke. A red build blocks merge.
+**Quality gate on every push.** CI runs ruff, mypy strict, and the full unit-test suite. A red build blocks merge.
 
 ---
 
@@ -197,7 +221,7 @@ The four-component spec gets a working prototype. I built more than that because
 
 **Guardrails.** Five named defenses, each with a paper citation. Action-Selector (Beurer-Kellner et al., 2025), the Plan-Then-Execute validation gate, Dual LLM (Willison, 2023), Spotlighting + Sandwich (Liu et al., USENIX 2024), and an input validator with a `sha256`-chained audit log verified across 100 sequential entries.
 
-There's also a 44-query gold eval suite, a Datadog-style trace inspector in the frontend, and live deploys. None of those are on the critical path for the four required components, so a reviewer who only wants to evaluate the spec can ignore this section.
+There's also a 44-query gold eval suite, a Datadog-style trace inspector in the frontend with an inline schema graph view that lights up the walked chain in red, and live deploys. None of those are on the critical path for the four required components, so a reviewer who only wants to evaluate the spec can ignore this section.
 
 ---
 
@@ -208,9 +232,9 @@ cd backend
 .venv/Scripts/python.exe -m pytest tests -m "not real_llm"
 ```
 
-**285 tests passing.** Covers the schema graph (entity/relation/value-map ops, BFS, subgraph expansion), the planner (mocked LLM, validator rejection paths, role enrichment), the executor (every op handler, dangling references, the KB-to-incident category bridge), guardrails (hash chain across 100 entries), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path.
+About 360 tests passing. Covers the schema graph (entity, relation, value-map ops, BFS, shortest-path enumeration, path validation, the schema invariant that every relation has an inverse), the planner (mocked LLM, validator rejection paths, ambiguous-on-bare-phrasing), the engine (every op, dangling references, the KB-to-incident category bridge, the multi-path walk with ranked fallback, the self-relation walk for "Ravi's manager"), guardrails (hash chain across 100 entries), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path.
 
-Quality gate: ruff + mypy strict + pytest, all clean. CI runs all three on every push.
+Quality gate: ruff + mypy strict + pytest, all clean. CI runs the lint, type check, and unit tests on every push.
 
 ## Eval
 
@@ -228,21 +252,20 @@ atomic-bridge/
 ├── backend/
 │   ├── data/                # schema.yaml + JSON fixtures
 │   ├── src/
-│   │   ├── core/            # schema_graph, data_store, transformations
-│   │   ├── planner/         # 3 agents + prompts + few-shot library
-│   │   ├── executor/        # engine + 6 op handlers + reference resolver
+│   │   ├── core/            # schema_graph (the executor), data_store, trace, filters, transformations
+│   │   ├── planner/         # planner + plan_schema + plan_validator + relation_scorer + prompts
+│   │   ├── response/        # responder + prompt
 │   │   ├── knowledge/       # FAISS KB retriever
-│   │   ├── response/        # response generator + grounding
 │   │   ├── guardrails/      # 5 named defenses
 │   │   ├── write_path/      # HITL propose/confirm
-│   │   ├── llm/             # Anthropic + OpenAI behind one Protocol
+│   │   ├── llm/             # Anthropic + OpenAI behind one Protocol, with retry + fallback
 │   │   ├── api/             # FastAPI routes + middleware + sessions
 │   │   └── mcp_server/      # 6 MCP tools (stdio + SSE)
 │   ├── eval/                # gold queries, runner, reports
-│   └── tests/               # 285 tests
+│   └── tests/               # ~360 tests
 └── frontend/
     ├── app/                 # chat + schema graph viewer
-    └── components/          # ChatPanel, PlanInspector (Plan/Trace/Data), ApprovalDialog
+    └── components/          # ChatPanel, PlanInspector (Plan/Trace/Data/Graph), ApprovalDialog
 ```
 
 ## Deploy
@@ -256,7 +279,7 @@ fly volumes create itsm_data --size 1
 fly secrets set ANTHROPIC_API_KEY=...
 ```
 
-Then to deploy:
+Then redeploys:
 
 ```bash
 fly deploy --remote-only -a itsm-bridge-backend
