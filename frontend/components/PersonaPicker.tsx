@@ -244,8 +244,8 @@ export function PersonaPicker({
             </ul>
           )}
           <div className="border-t border-line bg-bg/60 px-3 py-2 text-2xs text-fg-4">
-            Role auto-derived from the user's data. Switching persona starts a
-            fresh session.
+            Role auto-derived from the user&apos;s data. Switching persona
+            starts a fresh session.
           </div>
         </div>
       )}
