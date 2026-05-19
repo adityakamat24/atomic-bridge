@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from src.api.types import SessionState
+from src.api.types import Role, SessionState
 
 
 class InMemorySessionStore:
@@ -18,12 +18,29 @@ class InMemorySessionStore:
         self._ttl = timedelta(seconds=ttl_seconds)
         self._lock = asyncio.Lock()
 
-    async def create(self) -> SessionState:
+    async def create(
+        self,
+        *,
+        role: Role = "admin",
+        user_sys_id: str | None = None,
+        actor_name: str | None = None,
+        group_sys_ids: list[str] | None = None,
+        direct_report_sys_ids: list[str] | None = None,
+        managed_group_sys_ids: list[str] | None = None,
+        visible_user_sys_ids: list[str] | None = None,
+    ) -> SessionState:
         async with self._lock:
             now = datetime.now(UTC)
             sid = str(uuid.uuid4())
             state = SessionState(
                 session_id=sid,
+                user_sys_id=user_sys_id,
+                actor_name=actor_name,
+                role=role,
+                group_sys_ids=list(group_sys_ids or []),
+                direct_report_sys_ids=list(direct_report_sys_ids or []),
+                managed_group_sys_ids=list(managed_group_sys_ids or []),
+                visible_user_sys_ids=list(visible_user_sys_ids or []),
                 created_at=now,
                 last_active=now,
             )

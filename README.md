@@ -13,7 +13,7 @@ The system is hosted, so you don't need to clone, install, or run anything. Open
 
 The starter gallery in the demo covers the four query categories the PDF asks about, plus the trickier ones (a 3-hop walk, an ambiguous bare-name query, a self-relation walk for "Ravi's manager", and the HITL write flow). Local setup is at the bottom if you want it, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
 
-> The live demo runs in **admin view**. Every session has full read access across every table, sees every field (including ones flagged sensitive in the schema), and can propose write changes to any incident. Per-user scoping is in [What I'd do differently](#what-id-do-differently).
+> The live demo ships with a **persona picker** in the header. Click it for a searchable list of every user in the data, each tagged with a server-derived role: end_user, agent, manager, or admin. Admin keeps full access. End users see only their own tickets. Agents see their queue plus their groups' workload. Managers see their direct reports' tickets. Switch personas and the same query plays out differently. See the [Role-based view control](#role-based-view-control) section for the visibility matrix and how it's enforced.
 
 ServiceNow stores IT data with `sys_id` references, integer-coded statuses, and field names like `assignment_group`. The user thinks in employees, tickets, severity, teams. This is the layer that translates between the two, plans the work as a structured operation list, and only then executes against the data.
 
@@ -179,7 +179,43 @@ A few items, ranked by what would move the needle most.
 
 **SSE streaming on `/v1/query`.** Right now the frontend submits a POST and waits for the full response (plan plus trace plus answer) before rendering anything. Streaming would let the plan render as soon as it was generated, then trace steps as the executor walked them, then the answer. The change that would visibly improve perceived latency the most.
 
-**Per-user views and group-scoped data.** The current build runs in admin view, so the demo shows everything to everyone. With more time I'd add real user groups and route information to the right set of people. An end user would only see their own tickets and the KB. An IT agent would see their queue plus the queue of any group they belong to. A team manager would see their groups' workload but not other teams'. A director would see across the org. The plumbing for this already half-exists: sessions carry a `view_pii` capability that the plan validator uses to strip sensitive fields, and the schema flags fields with `is_sensitive`. What's missing is the identity layer (a real auth scheme that ties a session to a `sys_user` and a set of group memberships) and a row-level filter pass on top of every `find` and `traverse` so the executor enforces visibility before resolving.
+**Real auth.** Today the persona picker is client-side: the frontend sends a `role` and an `as_user_sys_id` in the create-session body, and the backend trusts both. That's fine for a take-home demo, since the point is to show the visibility model working end to end. A real deployment would tie the session to an SSO identity (Okta, Azure AD) and derive the role + group memberships from the IdP, not from the request body. Everything *downstream* of identity already works, see [Role-based view control](#role-based-view-control), so the swap is contained to the session-create handler.
+
+---
+
+# Role-based view control
+
+The four roles and the records each one can see:
+
+| Role | Demo persona | Visible incidents | Visible users | Visible groups | Aggregate | Write proposal |
+|------|--------------|-------------------|---------------|----------------|-----------|----------------|
+| **end_user** | John Doe | `caller_id = self` | self only | none | no | own tickets only |
+| **agent** | Ravi Kumar | `assigned_to = self` OR `assignment_group IN session.groups` | self + group members + own manager | groups they're a member of | yes | visible tickets |
+| **manager** | Deepak Sharma | caller or assignee in `{self ∪ direct reports}` | self + direct reports + own manager | groups they manage | yes | visible tickets |
+| **admin** | Service Desk Admin | all | all | all | yes | all |
+
+KB articles and categories are public for every role. Sensitive fields (today: `sys_user.email`) are redacted for everyone except admin.
+
+The matrix lives in [`backend/src/guardrails/view_scope.py`](backend/src/guardrails/view_scope.py) and is enforced by three layers that all consult the same module:
+
+1. **Planner-aware.** The planner gets a `## View scope` block in its prompt that names the actor and lists what they can see. It emits a scope-aligned plan, or sets `intent=out_of_scope` with a one-line clarification when the request clearly exceeds the role. This is the best UX path: the LLM doesn't even try the forbidden thing.
+
+2. **Validator rejects.** The plan validator catches anything the planner missed. Listing the full user table from an end_user session, aggregating from an end_user session, and a few other clear violations get a 400 with a readable error. No silent retry. The validator is loud on purpose.
+
+3. **Executor row-level filter.** The silent last-line guarantee. After every `find` and after every hop in `walk`, the scope's predicate runs over the resulting records and drops anything the actor can't see. Admin is a no-op. Group-scoped agents get records filtered by their precomputed `visible_user_sys_ids` set, computed once at session-create time.
+
+Identity is precomputed at session-create. POST `/v1/session` accepts `{role?, as_user_sys_id?}`. When `as_user_sys_id` is set without a role, the server derives it from the user's data (manager > agent > end_user); an explicit `role` overrides the derivation. The handler resolves the actor's groups, direct reports, managed groups, and visible-users set in one pass. The session is the source of truth for visibility; subsequent queries just consult it.
+
+`GET /v1/personas` returns the synthetic admin row plus every active user with their derived role, member groups, direct-report count, and managed-group count. The frontend uses this for the persona picker so a reviewer can switch to any actor in the data, not a hardcoded shortlist.
+
+Tests: 28 unit tests in [`test_view_scope.py`](backend/tests/unit/test_view_scope.py) cover the matrix and `derive_role` directly. Ten integration tests in [`test_role_visibility.py`](backend/tests/integration/test_role_visibility.py) exercise the full pipeline (planner -> validator -> executor) per role, including the validator rejection paths and PII stripping. Three more in [`test_api.py`](backend/tests/integration/test_api.py) cover the `/v1/personas` endpoint and the role-derivation / role-override behaviour at session-create time.
+
+What's NOT in this build, deliberately:
+
+- **Real auth.** The frontend tells the backend which persona to act as. A real deployment would derive identity from SSO, not the request body. The session-create handler is the contained change.
+- **Per-field permissions beyond `is_sensitive`.** A field is either sensitive (redacted for non-admin) or not. Production ServiceNow has richer ACLs; the schema and `OutputFilter` could grow them without restructuring.
+- **Per-record ACLs.** "This incident is locked to the security team" is not modeled. Possible as another field on the matrix.
+- **Manager-of-manager hierarchy.** Managers see direct reports, not reports-of-reports. Tree traversal is a future iteration.
 
 ---
 
@@ -215,7 +251,9 @@ A few items, ranked by what would move the needle most.
 
 The four-component spec gets a working prototype. I built more than that because Atomicwork's product is built around three things a bare-minimum prototype wouldn't show:
 
-**HITL writes.** Atomicwork's Atom is HITL-first. The write path here mirrors that. The planner emits a `write_proposal` op, the executor builds a per-field diff and stashes it under a one-time token, the frontend renders an approval dialog. Confirmation triggers a re-fetch and an optimistic-lock check on `sys_updated_on` before mutating. Only `create_incident` and `update_incident` are allowed, and the field set is whitelisted at the schema level. A prompt-injected "delete all incidents" cannot be represented in the plan, because the op doesn't exist.
+**Role-based view control.** Four roles (end_user, agent, manager, admin) with three enforcement layers. The planner sees a view-scope block in its prompt and emits a scope-appropriate plan, or sets `intent=out_of_scope` when the user's request clearly exceeds the role. The plan validator hard-rejects clear violations (an end user trying to enumerate the user table, an end user asking to aggregate). The executor applies a row-level filter after every `find` and after every hop in `walk`, so chains that pass through out-of-scope records get pruned silently. Three layers, one matrix in [`guardrails/view_scope.py`](backend/src/guardrails/view_scope.py), with 38 tests across unit and integration. The persona picker in the header reads `/v1/personas` and lists every user in the data with a server-derived role, so a reviewer can switch to any actor and watch the same query play out across views.
+
+**HITL writes.** Atomicwork's Atom is HITL-first. The write path here mirrors that. The planner emits a `write_proposal` op, the executor builds a per-field diff and stashes it under a one-time token, the frontend renders an approval dialog. Confirmation triggers a re-fetch and an optimistic-lock check on `sys_updated_on` before mutating. Only `create_incident` and `update_incident` are allowed, and the field set is whitelisted at the schema level. End users can propose writes only on their own tickets (validator-checked at plan time, executor-checked at confirm time). A prompt-injected "delete all incidents" cannot be represented in the plan, because the op doesn't exist.
 
 **MCP.** The whole layer is exposed as a Model Context Protocol server with six tools: `query_itsm` (natural language), `get_incident`, `list_incidents`, `search_kb` (structured), and `propose_write`, `confirm_write` (the HITL pair). Both stdio (for Claude Desktop) and SSE (for remote agents). This positions Atomic Bridge as a tool another agent can use.
 
@@ -232,7 +270,7 @@ cd backend
 .venv/Scripts/python.exe -m pytest tests -m "not real_llm"
 ```
 
-About 360 tests passing. Covers the schema graph (entity, relation, value-map ops, BFS, shortest-path enumeration, path validation, the schema invariant that every relation has an inverse), the planner (mocked LLM, validator rejection paths, ambiguous-on-bare-phrasing), the engine (every op, dangling references, the KB-to-incident category bridge, the multi-path walk with ranked fallback, the self-relation walk for "Ravi's manager"), guardrails (hash chain across 100 entries), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path.
+About 400 tests passing. Covers the schema graph (entity, relation, value-map ops, BFS, shortest-path enumeration, path validation, the schema invariant that every relation has an inverse), the planner (mocked LLM, validator rejection paths, ambiguous-on-bare-phrasing), the engine (every op, dangling references, the KB-to-incident category bridge, the multi-path walk with ranked fallback when the planner leaves `path` empty, the explicit-path-no-fallback rule, the self-relation walk for "Ravi's manager"), guardrails (hash chain across 100 entries, the role-based view-scope matrix, persona-role derivation), MCP server (transport security regression for the Fly hostname), and the full API pipeline including the write path and `/v1/personas`.
 
 Quality gate: ruff + mypy strict + pytest, all clean. CI runs the lint, type check, and unit tests on every push.
 
@@ -262,7 +300,7 @@ atomic-bridge/
 │   │   ├── api/             # FastAPI routes + middleware + sessions
 │   │   └── mcp_server/      # 6 MCP tools (stdio + SSE)
 │   ├── eval/                # gold queries, runner, reports
-│   └── tests/               # ~360 tests
+│   └── tests/               # ~400 tests
 └── frontend/
     ├── app/                 # chat + schema graph viewer
     └── components/          # ChatPanel, PlanInspector (Plan/Trace/Data/Graph), ApprovalDialog

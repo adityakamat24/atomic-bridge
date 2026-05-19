@@ -1,6 +1,8 @@
 import type {
   ConfirmResponse,
+  PersonaSummary,
   QueryResponse,
+  Role,
   SessionCreateResponse,
 } from "./types";
 
@@ -63,9 +65,21 @@ export async function submitQuery(
   return jsonOrThrow<QueryResponse>(res);
 }
 
-export async function createSession(): Promise<SessionCreateResponse> {
-  const res = await fetch(`${API_BASE}/v1/session`, { method: "POST" });
+export async function createSession(
+  role: Role | null = null,
+  asUserSysId: string | null = null,
+): Promise<SessionCreateResponse> {
+  const res = await fetch(`${API_BASE}/v1/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, as_user_sys_id: asUserSysId }),
+  });
   return jsonOrThrow<SessionCreateResponse>(res);
+}
+
+export async function listPersonas(): Promise<PersonaSummary[]> {
+  const res = await fetch(`${API_BASE}/v1/personas`);
+  return jsonOrThrow<PersonaSummary[]>(res);
 }
 
 export async function confirmWrite(

@@ -70,22 +70,23 @@ async def test_walk_single_hop_incident_to_caller(graph: SchemaGraph) -> None:
     assert result.records[0]["name"] == "John Doe"
 
 
-async def test_walk_falls_back_when_explicit_path_yields_empty(
+async def test_walk_explicit_path_returns_empty_without_silent_fallback(
     graph: SchemaGraph,
 ) -> None:
     """John Doe is an Engineering end user; he raises incidents but is
-    not assigned any. Walking via the planner-supplied `incidentsAssigned`
-    chain returns 0 records.
+    not assigned any. The user asks "tickets assigned to John", planner
+    emits the assignee chain, engine walks it -> 0 records.
 
-    The walker treats the planner's path as a HINT, not a hard
-    commitment — if the hint yields empty AND alternative simple chains
-    exist within max_hops, it falls back through them in
-    shortest-first / insertion order. For John, the fallback walks
-    `incidentsReported` and surfaces INC0012345. The trace records
-    both attempts so the user sees what happened. This is the
-    reviewer's data-adaptive ranking made concrete: the engine doesn't
-    know John is an end-user (no role rule); it just sees the first
-    chain returned nothing and tries the next.
+    Critically, the engine does NOT fall back to `incidentsReported`
+    just because that chain happens to have data. Falling back would
+    return INC0012345 (where John is the caller, not the assignee) and
+    the responder would label it "assigned to John" — a wrong-but-
+    confident answer. Empty IS the right answer here; the planner was
+    explicit, the data genuinely has no assignment to John.
+
+    When the planner is uncertain about path picking, it leaves
+    `path` empty and the engine + scorer + ranked-fallback handle
+    ambiguity (covered by the path=[] tests below).
     """
     john = graph.find(
         "sys_user",
@@ -94,17 +95,12 @@ async def test_walk_falls_back_when_explicit_path_yields_empty(
     result = await graph.walk(
         john, "sys_user", "incident", ["sys_user.incidentsAssigned"],
     )
-    # Fallback fired: records came from `incidentsReported` instead.
-    assert result.chain == ["sys_user.incidentsReported"]
-    numbers = {r["number"] for r in result.records}
-    assert "INC0012345" in numbers
-    # Trace shows the planner's hint failed and the alternative succeeded.
-    assert len(result.attempted_paths) >= 2
+    assert result.records == []
+    assert result.chain == ["sys_user.incidentsAssigned"]
+    # The planner's chain is the only one attempted; no silent fallback.
+    assert len(result.attempted_paths) == 1
     assert result.attempted_paths[0]["path"] == ["sys_user.incidentsAssigned"]
     assert result.attempted_paths[0]["records_count"] == 0
-    assert result.attempted_paths[0]["used"] is False
-    used = next(a for a in result.attempted_paths if a.get("used"))
-    assert used["path"] == ["sys_user.incidentsReported"]
 
 
 async def test_walk_self_loop_manages(graph: SchemaGraph) -> None:
@@ -310,15 +306,22 @@ async def test_walk_empty_source_returns_empty(graph: SchemaGraph) -> None:
     assert result.chain == ["sys_user.incidentsReported"]
 
 
-async def test_walk_dangling_reference_falls_back_to_alternative_chain(
+async def test_walk_dangling_reference_returns_empty_for_explicit_path(
     graph: SchemaGraph,
 ) -> None:
-    """INC0012350 has caller_id=usr999 (dangling). Walking
-    `incident.reportedBy` directly yields no user (store.get silently
-    drops the missing sys_id). The walker now falls back to other valid
-    chains within max_hops — e.g. via `incident.handledBy` to the
-    group, then via `sys_user_group.managedBy` to the team's manager.
-    The resolve step is where dangling-ref warnings surface, not here.
+    """INC0012350 has caller_id=usr999 (a dangling reference). Walking
+    `incident.reportedBy` lands on no user record (the store drops the
+    missing sys_id silently).
+
+    The walker does NOT fall back to a different relation here. The
+    user asked who *reported* the incident; the honest answer is "no
+    record found" (the caller_id points at a deleted/invalid user).
+    Falling back to the assignee or the group's manager would surface
+    a different person and the responder would label them the
+    reporter, which is wrong.
+
+    Dangling-ref warnings are surfaced at the resolve step where the
+    display_name_of helper returns `[Unknown sys_user usr999]`.
     """
     dangling = graph.find(
         "incident",
@@ -327,14 +330,11 @@ async def test_walk_dangling_reference_falls_back_to_alternative_chain(
     result = await graph.walk(
         dangling, "incident", "sys_user", ["incident.reportedBy"],
     )
-    # The planner's hint (reportedBy) was tried first and returned 0.
+    assert result.records == []
+    assert result.chain == ["incident.reportedBy"]
+    assert len(result.attempted_paths) == 1
     assert result.attempted_paths[0]["path"] == ["incident.reportedBy"]
     assert result.attempted_paths[0]["records_count"] == 0
-    # Some alternative chain yielded data — the walker found SOMEONE
-    # via a different chain (e.g. the group's manager).
-    if result.records:
-        used = next(a for a in result.attempted_paths if a.get("used"))
-        assert used["path"] != ["incident.reportedBy"]
 
 
 # ---------------------------------------------------------------------------

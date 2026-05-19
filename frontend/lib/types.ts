@@ -149,9 +149,48 @@ export interface QueryResponse {
   latency_ms: number;
 }
 
+export type Role = "end_user" | "agent" | "manager" | "admin";
+
+export interface SessionCreateRequest {
+  role?: Role | null;
+  as_user_sys_id?: string | null;
+}
+
 export interface SessionCreateResponse {
   session_id: string;
+  role?: Role;
+  actor_name?: string | null;
+  user_sys_id?: string | null;
 }
+
+/**
+ * Persona row returned by GET /v1/personas. The frontend renders these
+ * in the picker so a reviewer can switch to any actor, not just a
+ * hardcoded four. The role is server-derived from the user's data
+ * (manages_reports > member_groups > end_user). The synthetic admin
+ * row is always first.
+ */
+export interface PersonaSummary {
+  sys_id: string | null;
+  role: Role;
+  name: string;
+  department?: string | null;
+  member_groups: string[];
+  direct_report_count: number;
+  managed_group_count: number;
+  is_synthetic_admin: boolean;
+}
+
+export const ADMIN_FALLBACK: PersonaSummary = {
+  sys_id: null,
+  role: "admin",
+  name: "Admin",
+  department: "full access (no actor)",
+  member_groups: [],
+  direct_report_count: 0,
+  managed_group_count: 0,
+  is_synthetic_admin: true,
+};
 
 export interface ConfirmResponse {
   status: "confirmed" | "cancelled" | "expired" | "conflict" | "missing";

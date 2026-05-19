@@ -101,6 +101,10 @@ entities:
         description: "Reference to this user's manager"
         data_type: reference
         references: sys_user
+      - name: member_groups
+        display_name: "Group Memberships"
+        description: "Array of sys_user_group sys_ids this user belongs to. Use a `contains` filter to find users in a specific group (e.g., {field: member_groups, operator: contains, value: 'grp_desktop'} returns members of Desktop Support)."
+        data_type: array
       - name: active
         display_name: "Active"
         data_type: boolean

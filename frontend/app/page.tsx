@@ -5,15 +5,19 @@ import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { ChatMessage, ChatPanel } from "@/components/ChatPanel";
 import { BrandMark } from "@/components/Logo";
 import { MessageInput } from "@/components/MessageInput";
+import { PersonaPicker } from "@/components/PersonaPicker";
 import { PlanInspector } from "@/components/PlanInspector";
 import {
   ApiError,
   confirmWrite,
   createSession,
+  listPersonas,
   submitQuery,
 } from "@/lib/api";
+import { ADMIN_FALLBACK } from "@/lib/types";
 import type {
   ExecutionTrace,
+  PersonaSummary,
   QueryPlan,
   WriteProposal,
 } from "@/lib/types";
@@ -21,6 +25,10 @@ import type {
 export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [personas, setPersonas] = useState<PersonaSummary[]>([ADMIN_FALLBACK]);
+  const [persona, setPersona] = useState<PersonaSummary>(ADMIN_FALLBACK);
+  const [personasLoading, setPersonasLoading] = useState(true);
+  const [actorName, setActorName] = useState<string | null>(null);
   const [plan, setPlan] = useState<QueryPlan | null>(null);
   const [trace, setTrace] = useState<ExecutionTrace | null>(null);
   const [data, setData] = useState<unknown>(null);
@@ -32,9 +40,24 @@ export default function HomePage() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
   useEffect(() => {
-    createSession()
-      .then((s) => setSessionId(s.session_id))
+    createSession(null, null)
+      .then((s) => {
+        setSessionId(s.session_id);
+        setActorName(s.actor_name ?? null);
+      })
       .catch(() => setSessionId(null));
+    listPersonas()
+      .then((list) => {
+        if (list.length > 0) {
+          setPersonas(list);
+          const admin = list.find((p) => p.is_synthetic_admin);
+          if (admin) setPersona(admin);
+        }
+      })
+      .catch(() => setPersonas([ADMIN_FALLBACK]))
+      .finally(() => setPersonasLoading(false));
+    // Run once on mount; persona changes go through switchPersona.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const append = (m: ChatMessage) => setMessages((prev) => [...prev, m]);
@@ -58,7 +81,6 @@ export default function HomePage() {
       setTrace(resp.trace);
       setData(resp.data);
       if (resp.write_proposal) setPendingProposal(resp.write_proposal);
-      // Mobile-only: surface the new plan/trace automatically.
       if (
         typeof window !== "undefined" &&
         window.matchMedia("(max-width: 1023px)").matches
@@ -66,10 +88,20 @@ export default function HomePage() {
         setInspectorOpen(true);
       }
     } catch (e) {
-      const msg =
-        e instanceof ApiError ? `${e.status}: ${e.message}` : String(e);
-      replaceLastWith({ role: "system", content: `error: ${msg}` });
-      setError(msg);
+      // Plan-validation rejections render as a styled card, not a toast.
+      if (e instanceof ApiError && _isValidationFailure(e)) {
+        const errors = _extractValidationErrors(e);
+        replaceLastWith({
+          role: "assistant",
+          content: "",
+          scopeRefusal: errors,
+        });
+      } else {
+        const msg =
+          e instanceof ApiError ? `${e.status}: ${e.message}` : String(e);
+        replaceLastWith({ role: "system", content: `error: ${msg}` });
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -106,6 +138,30 @@ export default function HomePage() {
     }
   };
 
+  const switchPersona = async (p: PersonaSummary) => {
+    // Fresh session: visibility scope is precomputed at create-time and
+    // chat history from a different actor isn't relevant under the new view.
+    setMessages([]);
+    setPlan(null);
+    setTrace(null);
+    setData(null);
+    setPendingProposal(null);
+    setInspectorOpen(false);
+    setPersona(p);
+    try {
+      // role=null lets the server derive from the user; admin is explicit.
+      const s = await createSession(
+        p.is_synthetic_admin ? "admin" : null,
+        p.sys_id,
+      );
+      setSessionId(s.session_id);
+      setActorName(s.actor_name ?? p.name);
+    } catch {
+      setSessionId(null);
+      setActorName(p.name);
+    }
+  };
+
   const newSession = async () => {
     setMessages([]);
     setPlan(null);
@@ -114,8 +170,12 @@ export default function HomePage() {
     setPendingProposal(null);
     setInspectorOpen(false);
     try {
-      const s = await createSession();
+      const s = await createSession(
+        persona.is_synthetic_admin ? "admin" : null,
+        persona.sys_id,
+      );
       setSessionId(s.session_id);
+      setActorName(s.actor_name ?? persona.name);
     } catch {
       setSessionId(null);
     }
@@ -147,11 +207,11 @@ export default function HomePage() {
 
   return (
     <main className="flex h-screen flex-col bg-bg">
-      <header className="flex items-center justify-between border-b border-line bg-bg/90 px-4 h-14 backdrop-blur">
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between gap-3 border-b border-line bg-bg/90 px-4 h-14 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
           <Wordmark />
           <span className="hidden h-4 w-px bg-line sm:block" />
-          <AtomStatusChip busy={busy} sessionId={sessionId} />
+          <PlanningIndicator busy={busy} />
           {trace && (
             <span className="hidden font-mono text-2xs text-fg-4 sm:inline">
               · last {trace.total_latency_ms}ms
@@ -159,11 +219,17 @@ export default function HomePage() {
           )}
         </div>
         <div className="flex items-center gap-1.5">
+          <PersonaPicker
+            personas={personas}
+            current={persona}
+            onChange={switchPersona}
+            loading={personasLoading}
+          />
           <a
             href={schemaHref}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open the schema graph full-screen in a new tab. The Graph tab on the right shows the same view inline."
+            title="Open the schema graph full-screen in a new tab."
             className="group hidden items-center gap-1.5 rounded-md border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-2 transition hover:border-brand-line hover:bg-brand-soft hover:text-fg sm:flex"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -195,7 +261,12 @@ export default function HomePage() {
 
       <div className="grid flex-1 min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(420px,2fr)]">
         <section className="flex min-h-0 flex-col border-r border-line">
-          <ChatPanel messages={messages} onPickStarter={send} />
+          <ChatPanel
+            messages={messages}
+            onPickStarter={send}
+            role={persona.role}
+            actorName={actorName}
+          />
           <MessageInput onSubmit={send} disabled={busy} />
         </section>
         <aside className="hidden min-h-0 overflow-hidden bg-bg lg:block">
@@ -203,8 +274,6 @@ export default function HomePage() {
         </aside>
       </div>
 
-      {/* Mobile / tablet only: a floating button + bottom sheet for the
-          inspector, since the aside is hidden below the lg breakpoint. */}
       {hasInspectable && !inspectorOpen && (
         <button
           onClick={() => setInspectorOpen(true)}
@@ -226,9 +295,7 @@ export default function HomePage() {
       )}
 
       {inspectorOpen && (
-        <MobileInspectorSheet
-          onClose={() => setInspectorOpen(false)}
-        >
+        <MobileInspectorSheet onClose={() => setInspectorOpen(false)}>
           <PlanInspector plan={plan} trace={trace} data={data} />
         </MobileInspectorSheet>
       )}
@@ -249,6 +316,24 @@ export default function HomePage() {
   );
 }
 
+function _isValidationFailure(err: ApiError): boolean {
+  if (err.status !== 400) return false;
+  const d = err.detail;
+  return !!(
+    d &&
+    typeof d === "object" &&
+    "error" in (d as Record<string, unknown>) &&
+    (d as Record<string, unknown>).error === "plan_validation_failed"
+  );
+}
+
+function _extractValidationErrors(err: ApiError): string[] {
+  const d = err.detail as Record<string, unknown> | null | undefined;
+  const errors = d?.errors;
+  if (Array.isArray(errors)) return errors.map((x) => String(x));
+  return [err.message || "plan validation failed"];
+}
+
 function Wordmark() {
   return (
     <a href="/" className="flex items-center gap-2 text-fg">
@@ -265,34 +350,17 @@ function Wordmark() {
   );
 }
 
-function AtomStatusChip({
-  busy,
-  sessionId,
-}: {
-  busy: boolean;
-  sessionId: string | null;
-}) {
-  // Replaces the silent session-only badge with one that also reflects
-  // whether Atom is currently planning a response. Echoes atomicwork.com's
-  // small "Atom" agent badges.
-  const ready = !!sessionId && !busy;
-  const noSession = !sessionId;
-  let label: string;
-  let dotClass: string;
-  if (busy) {
-    label = "Atom · planning";
-    dotClass = "bg-amber pulse-dot";
-  } else if (noSession) {
-    label = "no session";
-    dotClass = "bg-fg-5";
-  } else {
-    label = `Atom · ready${sessionId ? ` · ${sessionId.slice(0, 8)}` : ""}`;
-    dotClass = "bg-success";
-  }
+function PlanningIndicator({ busy }: { busy: boolean }) {
   return (
     <span className="hidden items-center gap-1.5 sm:inline-flex">
-      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
-      <span className="font-mono text-2xs text-fg-3">{label}</span>
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          busy ? "bg-amber pulse-dot" : "bg-success"
+        }`}
+      />
+      <span className="font-mono text-2xs text-fg-3">
+        {busy ? "Atom · planning" : "Atom · ready"}
+      </span>
     </span>
   );
 }
@@ -304,15 +372,11 @@ function MobileInspectorSheet({
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  // Slide-up sheet for the inspector on screens below the lg breakpoint.
-  // Esc closes, backdrop click closes, and the close button is the first
-  // focusable element so screen-readers land there on open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    // Prevent body scroll while open.
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {

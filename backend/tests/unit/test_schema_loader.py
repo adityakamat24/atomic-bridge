@@ -32,7 +32,8 @@ def test_real_schema_field_counts_per_entity() -> None:
     counts = {e.id: len(g.fields_of(e.id)) for e in g.all_entities()}
     assert counts == {
         "incident": 11,
-        "sys_user": 6,
+        # email, name, department, location, manager, member_groups, active
+        "sys_user": 7,
         "sys_user_group": 3,
         "kb_knowledge": 5,
         "category": 2,

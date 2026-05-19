@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from src.core.schema_graph import SchemaGraph
 
+if TYPE_CHECKING:
+    from src.guardrails.view_scope import ViewScope
+
 
 class SessionContext(BaseModel):
-    """Subset of session state used for authorization. Phase 10 wires the
-    full session store; this model is what the output filter consumes."""
-
     can_view_pii: bool = False
     can_write: bool = True
 
 
-# Patterns that should never appear in a response. Each match is redacted +
-# logged as a warning. Kept conservative — false positives are rare on
-# ITSM-shaped responses.
 _LEAK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"sk-[A-Za-z0-9]{24,}"), "potential API key"),
     (re.compile(r"AKIA[0-9A-Z]{16}"), "potential AWS key"),
@@ -30,20 +27,22 @@ REDACTION = "[REDACTED]"
 
 
 class OutputFilter:
-    """Applied at two points (05-guardrails.md §Defense 4):
-    - on each record returned by the executor's resolve handler (PII)
-    - on the final text from the response generator (regex sweep)
-    """
+    """Per-record PII redaction + final-text regex leak scan."""
 
     def __init__(self, graph: SchemaGraph, session: SessionContext) -> None:
         self._graph = graph
         self._session = session
-        # Pre-compute the set of sensitive field names per entity.
         self._sensitive: dict[str, set[str]] = {}
         for entity in graph.all_entities():
             self._sensitive[entity.id] = {
                 f.name for f in graph.fields_of(entity.id) if f.is_sensitive
             }
+
+    @classmethod
+    def from_view_scope(
+        cls, graph: SchemaGraph, scope: ViewScope,
+    ) -> OutputFilter:
+        return cls(graph, SessionContext(can_view_pii=scope.can_view_pii))
 
     def filter_record(self, record: dict[str, Any], entity: str) -> dict[str, Any]:
         if self._session.can_view_pii:

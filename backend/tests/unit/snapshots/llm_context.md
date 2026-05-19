@@ -31,6 +31,7 @@ Fields:
 - department (Department, string)
 - location (Location, string)
 - manager (Manager (sys_id), reference -> sys_user): Reference to this user's manager
+- member_groups (Group Memberships, array): Array of sys_user_group sys_ids this user belongs to. Use a `contains` filter to find users in a specific group (e.g., {field: member_groups, operator: contains, value: 'grp_desktop'} returns members of Desktop Support).
 - active (Active, boolean)
 
 Outbound relations:

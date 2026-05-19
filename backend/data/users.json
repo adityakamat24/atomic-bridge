@@ -6,6 +6,7 @@
     "department": "Engineering",
     "location": "New York",
     "manager": "usr009",
+    "member_groups": [],
     "active": true
   },
   {
@@ -15,6 +16,7 @@
     "department": "Marketing",
     "location": "London",
     "manager": "usr009",
+    "member_groups": [],
     "active": true
   },
   {
@@ -24,6 +26,7 @@
     "department": "IT Support",
     "location": "Bangalore",
     "manager": "usr010",
+    "member_groups": ["grp_desktop", "grp_network"],
     "active": true
   },
   {
@@ -33,6 +36,7 @@
     "department": "Finance",
     "location": "New York",
     "manager": "usr009",
+    "member_groups": [],
     "active": true
   },
   {
@@ -42,6 +46,7 @@
     "department": "Facilities",
     "location": "New York",
     "manager": "usr010",
+    "member_groups": ["grp_facilities"],
     "active": true
   },
   {
@@ -51,6 +56,7 @@
     "department": "Product",
     "location": "San Francisco",
     "manager": "usr009",
+    "member_groups": [],
     "active": true
   },
   {
@@ -60,6 +66,7 @@
     "department": "Engineering",
     "location": "New York",
     "manager": "usr009",
+    "member_groups": [],
     "active": true
   },
   {
@@ -69,6 +76,7 @@
     "department": "IT Support",
     "location": "Bangalore",
     "manager": "usr010",
+    "member_groups": ["grp_desktop", "grp_security"],
     "active": true
   },
   {
@@ -78,6 +86,7 @@
     "department": "Engineering",
     "location": "New York",
     "manager": null,
+    "member_groups": [],
     "active": true
   },
   {
@@ -87,6 +96,7 @@
     "department": "IT Operations",
     "location": "Bangalore",
     "manager": null,
+    "member_groups": ["grp_network", "grp_desktop", "grp_facilities", "grp_cloud", "grp_security"],
     "active": true
   }
 ]

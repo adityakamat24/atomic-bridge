@@ -15,6 +15,7 @@ from src.core.trace import ExecutionError, ExecutionResult, ExecutionTrace, Trac
 
 if TYPE_CHECKING:
     from src.core.data_store import DataStore
+    from src.guardrails.view_scope import ViewScope
     from src.knowledge.retriever import KBRetriever
     from src.planner.plan_schema import (
         AggregateOp,
@@ -84,7 +85,7 @@ EDGE_TO = "TO"
 EDGE_INVERSE_OF = "INVERSE_OF"
 
 
-DataType = Literal["string", "integer", "datetime", "reference", "boolean"]
+DataType = Literal["string", "integer", "datetime", "reference", "boolean", "array"]
 Cardinality = Literal["one_to_one", "many_to_one", "one_to_many", "many_to_many"]
 
 # Maximum number of relation chains the engine will try before giving up
@@ -801,11 +802,14 @@ class SchemaGraph:
         entity_id: str,
         filters: list[Filter] | None = None,
         limit: int = 100,
+        view_scope: ViewScope | None = None,
     ) -> list[Record]:
-        """Indexed lookup via the bound DataStore. Plan-validator-side
-        translation has already converted display strings to value-map
-        codes; the store's filter evaluator handles the rest."""
-        return self.store.find(entity_id, list(filters or []), limit=limit)
+        """Indexed lookup; the view-scope row filter (when non-admin)
+        narrows the result before it returns."""
+        records = self.store.find(entity_id, list(filters or []), limit=limit)
+        if view_scope is not None and not view_scope.is_admin:
+            records = view_scope.filter_records(entity_id, records)
+        return records
 
     async def walk(
         self,
@@ -817,38 +821,15 @@ class SchemaGraph:
         filters_by_entity: dict[str, list[Filter]] | None = None,
         scorer: RelationScorer | None = None,
         user_query: str = "",
+        view_scope: ViewScope | None = None,
     ) -> WalkResult:
-        """Walk a relation chain from source_records to target_entity.
-
-        Two modes:
-          1. **Explicit path** (``path`` is non-empty): walk it directly.
-             The validator has already confirmed it's a valid shortest
-             chain. No LLM involvement.
-          2. **Engine-resolved path** (``path`` is empty AND source !=
-             target): enumerate shortest chains via
-             ``shortest_relation_paths``. If exactly one, walk it. If
-             multiple, call ``scorer`` to pick — the reviewer's
-             prescribed LLM-driven relation-scoring pass.
-
-        Reflexive walk (source_entity == target_entity, path == []):
-        returns source_records, optionally filtered by
-        filters_by_entity[target_entity].
-
-        ``filters_by_entity`` keys must be entities visited by the chain
-        (or equal to source/target). Filters fire immediately after the
-        walk reaches that entity. The validator catches off-chain keys
-        for explicit paths; for engine-resolved paths, off-chain keys
-        are silently skipped (the planner shouldn't generate them).
-
-        Returns WalkResult(records, chain, hops_filtered, scorer_choice).
-        ``chain`` is the actual relation ids walked. ``scorer_choice`` is
-        populated only when the scorer was invoked.
-        """
+        """Walk from source_records to target_entity along ``path``, or
+        let the engine resolve when ``path`` is empty. See the two-mode
+        comment below the reflexive branch."""
         fbe = filters_by_entity or {}
         scorer_choice: ScorerChoice | None = None
         attempted_paths: list[dict[str, Any]] = []
 
-        # Reflexive: nothing to walk; possibly filter the source records.
         if not path and source_entity == target_entity:
             records = list(source_records)
             hops_filtered: list[str] = []
@@ -858,28 +839,18 @@ class SchemaGraph:
                     records, target_filters, target_entity, self,
                 )
                 hops_filtered.append(target_entity)
+            if view_scope is not None and not view_scope.is_admin:
+                records = view_scope.filter_records(target_entity, records)
             return WalkResult(
                 records=records, chain=[], hops_filtered=hops_filtered,
                 scorer_choice=None, attempted_paths=[],
             )
 
-        # Build the ranked list of chains to try.
-        #
-        # The planner's explicit `path` is treated as a HINT — its first
-        # guess — not an authoritative-and-only choice. The LLM often
-        # picks the wrong chain when verb phrases superficially match
-        # (e.g., `sys_user.managesGroups` has verb_phrase "manages team",
-        # which matches "team" in the user's query even when the user
-        # meant "the team a person works on"). Treating the planner's
-        # pick as a starting attempt + falling back through other valid
-        # chains on empty is the data-adaptive recovery: no role rules,
-        # no schema-side hardcoding — just "if this chain returned no
-        # data, try the next semantic interpretation."
-        #
-        # If `path` is empty, the engine enumerates from scratch.
-        # If `path` is non-empty, it goes at rank 0 + the other simple
-        # chains follow in scorer order (or insertion order without a
-        # scorer).
+        # Two modes:
+        #   (a) explicit path -> walk only that chain (empty is the answer);
+        #   (b) empty path -> engine enumerates + scorer ranks + falls back
+        #       through the ranking until one chain returns records.
+        # Honest empty beats a fallback that mislabels the relationship.
         all_candidates = self.enumerate_simple_paths(
             source_entity, target_entity,
         )
@@ -898,54 +869,40 @@ class SchemaGraph:
                 seen.add(key)
                 ranked_chains.append(chain_ids)
 
-        # Rank 0: planner's hint, if any.
         if path:
             _add_chain(list(path))
-
-        # Remaining candidates ordering:
-        # - When planner committed to an explicit path, we already have
-        #   rank 0; fallbacks use deterministic insertion order
-        #   (shortest-first). No scorer call needed because the planner
-        #   already declared its preference.
-        # - When planner emitted no path, ask the scorer to rank all
-        #   candidates — this is the reviewer's "rank them by which one
-        #   best matches the user's phrasing" prescription.
-        if not path and len(all_candidates) > 1 and scorer is not None:
-            scorer_choice = await scorer.choose(
-                all_candidates,
-                user_query=user_query,
-                source_entity=source_entity,
-                target_entity=target_entity,
-            )
-            order = list(scorer_choice.ranking) or list(range(len(all_candidates)))
         else:
-            order = list(range(len(all_candidates)))
+            if len(all_candidates) > 1 and scorer is not None:
+                scorer_choice = await scorer.choose(
+                    all_candidates,
+                    user_query=user_query,
+                    source_entity=source_entity,
+                    target_entity=target_entity,
+                )
+                order = list(scorer_choice.ranking) or list(
+                    range(len(all_candidates))
+                )
+            else:
+                order = list(range(len(all_candidates)))
+            for candidate_index in order:
+                chain_ids = [r.id for r in all_candidates[candidate_index]]
+                _add_chain(chain_ids)
+            # Cap at MAX_FALLBACK_ATTEMPTS. Each store call is real cost,
+            # and the Nth-ranked chain is increasingly unlikely to be
+            # the user's intent.
+            if len(ranked_chains) > MAX_FALLBACK_ATTEMPTS:
+                ranked_chains = ranked_chains[:MAX_FALLBACK_ATTEMPTS]
 
-        for candidate_index in order:
-            chain_ids = [r.id for r in all_candidates[candidate_index]]
-            _add_chain(chain_ids)
-
-        # Cap at MAX_FALLBACK_ATTEMPTS. Each store call is real cost,
-        # and the Nth-ranked chain is increasingly unlikely to be the
-        # user's intent. If every attempt within the cap is empty, we
-        # surface "no records" with the planner's first preference in
-        # the trace — better than silently walking 10 chains.
-        if len(ranked_chains) > MAX_FALLBACK_ATTEMPTS:
-            ranked_chains = ranked_chains[:MAX_FALLBACK_ATTEMPTS]
-
-        # Walk down the ranked chains; first non-empty result wins.
-        # We capture the FIRST attempt separately so that if every chain
-        # returns empty, we surface the planner's first preference (its
-        # chain + the hops where filters fired) in the trace, not the
-        # last fallback. That keeps mid-hop filter tracking correct
-        # ("filter DID apply at incident hop, even though final result
-        # was empty") and makes the trace match the planner's intent.
+        # If every chain returns empty, the trace surfaces the FIRST
+        # attempt (planner's preference), so mid-hop filter tracking
+        # matches the planner's intent rather than the last fallback.
         first_attempt: WalkResult | None = None
         for rank_index, chain_ids in enumerate(ranked_chains):
             attempt = self._walk_explicit_path(
                 source_records, chain_ids, fbe,
                 attempted_paths=[],
                 scorer_choice=None,
+                view_scope=view_scope,
             )
             if first_attempt is None:
                 first_attempt = attempt
@@ -965,9 +922,7 @@ class SchemaGraph:
                     attempted_paths=attempted_paths,
                 )
 
-        # Every ranked chain returned zero. Surface the planner's first
-        # preference (rank 0) as the "used" attempt + carry through its
-        # chain and hops_filtered.
+        # Every chain returned zero; mark rank 0 as "used" for the trace.
         if attempted_paths:
             attempted_paths[0]["used"] = True
         if first_attempt is None:
@@ -991,10 +946,12 @@ class SchemaGraph:
         *,
         attempted_paths: list[dict[str, Any]],
         scorer_choice: ScorerChoice | None,
+        view_scope: ViewScope | None = None,
     ) -> WalkResult:
-        """Walk a specific relation chain end-to-end. Shared between the
-        planner-supplied path branch and each fallback attempt in the
-        engine-resolved branch."""
+        """Walk a specific chain end-to-end. The view-scope filter
+        applies at each hop after the per-hop filters_by_entity, so
+        out-of-scope intermediate records get pruned before the next
+        hop."""
         current = list(source_records)
         chain: list[str] = []
         hops_filtered: list[str] = []
@@ -1008,6 +965,8 @@ class SchemaGraph:
                     current, entity_filters, rel.to_entity, self,
                 )
                 hops_filtered.append(rel.to_entity)
+            if view_scope is not None and not view_scope.is_admin:
+                current = view_scope.filter_records(rel.to_entity, current)
         return WalkResult(
             records=current, chain=chain, hops_filtered=hops_filtered,
             scorer_choice=scorer_choice,
@@ -1295,6 +1254,7 @@ class SchemaGraph:
         request_id: str = "",
         *,
         scorer: RelationScorer | None = None,
+        view_scope: ViewScope | None = None,
     ) -> ExecutionResult:
         """Drive a validated QueryPlan through the graph's own methods,
         building an ExecutionTrace as we go.
@@ -1340,12 +1300,13 @@ class SchemaGraph:
             step: TraceStep
             try:
                 if isinstance(op, FindOp):
-                    result, step = self._exec_find(op)
+                    result, step = self._exec_find(op, view_scope=view_scope)
                     var_entity[op.id] = op.entity
                 elif isinstance(op, TraverseOp):
                     result, step = await self._exec_traverse(
                         op, bindings, var_entity, warnings,
                         scorer=scorer, user_query=query,
+                        view_scope=view_scope,
                     )
                 elif isinstance(op, AggregateOp):
                     result, step = self._exec_aggregate(
@@ -1362,6 +1323,7 @@ class SchemaGraph:
                     result, step = self._exec_write_proposal(
                         op, bindings, var_entity, warnings, plan_id=request_id,
                         nl_query=query,
+                        view_scope=view_scope,
                     )
                 else:
                     raise ExecutionError(f"unknown op type: {op.op!r}")
@@ -1386,11 +1348,13 @@ class SchemaGraph:
     # readable. Each builds a TraceStep alongside the result.
 
     def _exec_find(
-        self, op: FindOp,
+        self, op: FindOp, *, view_scope: ViewScope | None = None,
     ) -> tuple[list[Record], TraceStep]:
         import time
         t0 = time.perf_counter()
-        records = self.find(op.entity, list(op.filters), limit=op.limit)
+        records = self.find(
+            op.entity, list(op.filters), limit=op.limit, view_scope=view_scope,
+        )
         elapsed = int((time.perf_counter() - t0) * 1000)
         step = TraceStep(
             op_id=op.id,
@@ -1415,6 +1379,7 @@ class SchemaGraph:
         *,
         scorer: RelationScorer | None,
         user_query: str,
+        view_scope: ViewScope | None = None,
     ) -> tuple[list[Record], TraceStep]:
         import time
         var_id = op.from_var.lstrip("$")
@@ -1437,6 +1402,7 @@ class SchemaGraph:
             },
             scorer=scorer,
             user_query=user_query,
+            view_scope=view_scope,
         )
         elapsed = int((time.perf_counter() - t0) * 1000)
 
@@ -1627,6 +1593,7 @@ class SchemaGraph:
         *,
         plan_id: str = "",
         nl_query: str = "",
+        view_scope: ViewScope | None = None,
     ) -> tuple[WriteProposal, TraceStep]:
         import time
         target_record: Record | None = None
@@ -1642,6 +1609,20 @@ class SchemaGraph:
                     f"write_proposal {op.id!r}: target_var {op.target_var} "
                     f"resolved to no record",
                 )
+        # end_user write gate: validator can't see record data, so
+        # check ownership here (and again at /confirm).
+        if (
+            view_scope is not None
+            and not view_scope.is_admin
+            and view_scope.role == "end_user"
+            and target_record is not None
+            and source_entity == "incident"
+            and target_record.get("caller_id") != view_scope.user_sys_id
+        ):
+            raise ExecutionError(
+                f"op {op.id!r}: as end_user, you can only propose "
+                f"changes to tickets you raised"
+            )
         t0 = time.perf_counter()
         proposal = self.propose_write(
             op.action,

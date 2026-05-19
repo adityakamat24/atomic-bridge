@@ -1,33 +1,13 @@
-"""Single-LLM-call planner.
-
-Replaces the old preprocessor + plan_generator + few-shot retriever
-pipeline. The planner emits a fully-formed QueryPlan from a tight system
-prompt + the schema markdown + the user's query (and an optional prior
-turn for pronoun resolution).
-
-Why one LLM call instead of three:
-  * The preprocessor's only LLM-side responsibility was intent
-    classification and entity extraction. Modern Claude / GPT do both
-    inline as part of plan emission when the system prompt is explicit
-    about the intent set.
-  * Name resolution is deterministic and lives in the data store
-    (planner emits `find sys_user filters=[name contains "..."]`); no
-    application-layer pre-indexed fuzzy match.
-  * Few-shot examples were a crutch for the role-routing rules that no
-    longer exist. The declarative `traverse to_entity=X path=[...]`
-    shape combined with the JSON schema is enough for the LLM to follow.
-
-The single LLM call still gets tool-use enforcement (Anthropic
-`tool_choice` / OpenAI structured output force the QueryPlan shape), and
-the Pydantic validator hard-rejects any plan whose names aren't in the
-schema or whose chain isn't a valid shortest path.
-"""
+"""Single-LLM-call planner: schema + view-scope + query -> validated
+QueryPlan via tool_call. Pure-Python validator rejects invented names,
+non-shortest paths, and role-scope violations."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
 from src.core.schema_graph import SchemaGraph
+from src.guardrails.view_scope import ViewScope
 from src.llm.base import BaseLLMClient
 from src.planner.plan_schema import QueryPlan, query_plan_tool_schema
 from src.planner.plan_validator import PlanValidator
@@ -37,22 +17,14 @@ PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "planner.md"
 
 @dataclass(frozen=True)
 class PriorTurn:
-    """A snapshot of the previous conversation turn the planner uses
-    to resolve pronouns. The session store builds this from the previous
-    response's plan."""
+    """Previous turn's query + resolved entity ids, used for pronoun
+    resolution."""
 
     query: str
     resolved_entities: tuple[str, ...] = ()
 
 
 class Planner:
-    """One privileged LLM call -> a validated QueryPlan.
-
-    The privileged client has tool use; the response generator (separate
-    quarantined client) does not. DualLLMBoundary asserts they are
-    distinct at app startup.
-    """
-
     def __init__(
         self,
         llm: BaseLLMClient,
@@ -70,8 +42,9 @@ class Planner:
         self,
         query: str,
         prior_turn: PriorTurn | None = None,
+        view_scope: ViewScope | None = None,
     ) -> QueryPlan:
-        prompt = self._build_prompt(query, prior_turn)
+        prompt = self._build_prompt(query, prior_turn, view_scope)
         raw = await self._llm.tool_call(
             prompt,
             query_plan_tool_schema(),
@@ -80,17 +53,18 @@ class Planner:
             max_tokens=4096,
         )
         plan = QueryPlan.model_validate(raw)
-        # Pure-Python validator: rejects invented names, non-shortest
-        # paths, off-chain filters, exceeded resource caps, etc. Also
-        # translates display-string filter values to value-map codes.
-        return self._validator.validate(plan)
+        return self._validator.validate(plan, view_scope=view_scope)
 
     def _build_prompt(
         self,
         query: str,
         prior_turn: PriorTurn | None,
+        view_scope: ViewScope | None,
     ) -> str:
         schema_md = self._graph.to_llm_context()
+        scope_block = ""
+        if view_scope is not None and not view_scope.is_admin:
+            scope_block = view_scope.context_for_planner_prompt() + "\n"
         prior_block = ""
         if prior_turn:
             prior_block = (
@@ -105,6 +79,7 @@ class Planner:
             prior_block += "\n"
         return (
             f"## Schema\n\n{schema_md}\n"
+            f"{scope_block}"
             f"{prior_block}"
             f"## User query\n\n{query}\n\n"
             f"Emit a QueryPlan via the generate_plan tool."

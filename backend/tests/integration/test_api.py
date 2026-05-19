@@ -51,6 +51,50 @@ def test_schema_visjs_endpoint(client: TestClient) -> None:
     assert "edges" in body
 
 
+def test_personas_endpoint_returns_admin_first_then_users(
+    client: TestClient,
+) -> None:
+    r = client.get("/v1/personas")
+    assert r.status_code == 200
+    rows = r.json()
+    # Admin synthetic row first.
+    assert rows[0]["is_synthetic_admin"] is True
+    assert rows[0]["role"] == "admin"
+    assert rows[0]["sys_id"] is None
+    # Followed by real users with derived roles.
+    real = [r for r in rows[1:] if r["sys_id"]]
+    assert len(real) >= 10  # all users in the demo fixture
+    by_id = {r["sys_id"]: r for r in real}
+    assert by_id["usr001"]["role"] == "end_user"  # John
+    assert by_id["usr003"]["role"] == "agent"      # Ravi
+    assert by_id["usr010"]["role"] == "manager"    # Deepak
+
+
+def test_session_create_derives_role_from_user(client: TestClient) -> None:
+    # Caller sends just as_user_sys_id, no role -> server derives.
+    r = client.post(
+        "/v1/session",
+        json={"as_user_sys_id": "usr003"},  # Ravi
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["role"] == "agent"
+    assert body["user_sys_id"] == "usr003"
+    assert body["actor_name"] == "Ravi Kumar"
+
+
+def test_session_create_role_override_wins_over_derivation(
+    client: TestClient,
+) -> None:
+    # Pin Ravi to end_user even though his data would derive 'agent'.
+    r = client.post(
+        "/v1/session",
+        json={"as_user_sys_id": "usr003", "role": "end_user"},
+    )
+    assert r.status_code == 200
+    assert r.json()["role"] == "end_user"
+
+
 # ---------- Plan fixtures (declarative TraverseOp shape) ------------------
 
 

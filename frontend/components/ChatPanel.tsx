@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BrandMark } from "@/components/Logo";
-import type { Intent, QueryResponse } from "@/lib/types";
+import type { Intent, QueryResponse, Role } from "@/lib/types";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -12,6 +12,8 @@ export interface ChatMessage {
   response?: QueryResponse;
   pending?: boolean;
   warnings?: string[];
+  /** Structured 400 error messages, rendered as a refusal card. */
+  scopeRefusal?: string[];
 }
 
 interface Starter {
@@ -31,9 +33,9 @@ type StarterIconName =
   | "tree"
   | "edit";
 
-// Eight starters — one per backend capability — surfaced as a feature
-// grid so new users see the range of question shapes Atom can answer.
-const STARTERS: Starter[] = [
+// Per-role starter gallery. Admin gets eight cards covering every
+// backend capability; the other roles get four each, scoped to their view.
+const ADMIN_STARTERS: Starter[] = [
   {
     category: "lookup",
     query: "What's the status of John Doe's VPN issue?",
@@ -49,7 +51,7 @@ const STARTERS: Starter[] = [
   {
     category: "knowledge",
     query: "How do I fix Outlook crashing?",
-    hint: "Vector search the KB — no graph walk needed.",
+    hint: "Vector search the KB, no graph walk needed.",
     icon: "book",
   },
   {
@@ -61,7 +63,7 @@ const STARTERS: Starter[] = [
   {
     category: "3-hop walk",
     query: "KB articles relevant to incidents Ravi's team is handling",
-    hint: "Team → incident → category → KB articles in one declarative step.",
+    hint: "team -> incident -> category -> KB articles in one declarative step.",
     icon: "graph",
   },
   {
@@ -84,14 +86,106 @@ const STARTERS: Starter[] = [
   },
 ];
 
+const END_USER_STARTERS: Starter[] = [
+  {
+    category: "my tickets",
+    query: "Show me my open tickets",
+    hint: "Only tickets where you are the caller.",
+    icon: "search",
+  },
+  {
+    category: "lookup",
+    query: "What's the status of my VPN issue?",
+    hint: "Scoped to your own incidents.",
+    icon: "branch",
+  },
+  {
+    category: "knowledge",
+    query: "How do I fix Outlook crashing?",
+    hint: "The KB is public for every role.",
+    icon: "book",
+  },
+  {
+    category: "out of scope",
+    query: "Show me all users",
+    hint: "Atom will refuse, because end users can't list the user table.",
+    icon: "users",
+  },
+];
+
+const AGENT_STARTERS: Starter[] = [
+  {
+    category: "my queue",
+    query: "What's on my queue?",
+    hint: "Tickets assigned to you OR handled by your groups.",
+    icon: "search",
+  },
+  {
+    category: "team workload",
+    query: "Open incidents handled by Desktop Support",
+    hint: "Filter by your group's assignment.",
+    icon: "users",
+  },
+  {
+    category: "3-hop walk",
+    query: "KB articles relevant to my open incidents",
+    hint: "Walks your queue to category to KB articles.",
+    icon: "graph",
+  },
+  {
+    category: "write",
+    query: "Close INC0012345",
+    hint: "Propose a state change on a visible ticket.",
+    icon: "edit",
+  },
+];
+
+const MANAGER_STARTERS: Starter[] = [
+  {
+    category: "my team",
+    query: "Show me my team's open tickets",
+    hint: "Direct reports' tickets, both caller and assignee sides.",
+    icon: "users",
+  },
+  {
+    category: "analytical",
+    query: "How many tickets is my team working on?",
+    hint: "Aggregate across direct reports.",
+    icon: "chart",
+  },
+  {
+    category: "priority",
+    query: "Highest priority issues on my team",
+    hint: "Surfaces the worst-of-list across your reports.",
+    icon: "branch",
+  },
+  {
+    category: "write",
+    query: "Reassign INC0012346 to Priya Patel",
+    hint: "Propose an assignee change.",
+    icon: "edit",
+  },
+];
+
+const STARTERS_BY_ROLE: Record<Role, Starter[]> = {
+  admin: ADMIN_STARTERS,
+  end_user: END_USER_STARTERS,
+  agent: AGENT_STARTERS,
+  manager: MANAGER_STARTERS,
+};
+
 const ROTATING_NOUNS = ["tickets", "outages", "employees", "the whole queue"];
 
 export function ChatPanel({
   messages,
   onPickStarter,
+  role = "admin",
+  actorName = null,
 }: {
   messages: ChatMessage[];
   onPickStarter?: (q: string) => void;
+  role?: Role;
+  actorName?: string | null;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -99,7 +193,13 @@ export function ChatPanel({
   }, [messages]);
 
   if (messages.length === 0 && onPickStarter) {
-    return <EmptyHero onPickStarter={onPickStarter} />;
+    return (
+      <EmptyHero
+        onPickStarter={onPickStarter}
+        role={role}
+        actorName={actorName}
+      />
+    );
   }
 
   return (
@@ -119,10 +219,33 @@ export function ChatPanel({
   );
 }
 
-function EmptyHero({ onPickStarter }: { onPickStarter: (q: string) => void }) {
-  // Pick the widest noun as the sizer so the rotating span doesn't reflow
-  // when shorter words swap in.
+const ROLE_LABEL: Record<Role, string> = {
+  admin: "admin",
+  end_user: "end user",
+  agent: "agent",
+  manager: "manager",
+};
+
+const ROLE_HUE: Record<Role, string> = {
+  admin: "var(--hue-emerald)",
+  end_user: "var(--hue-slate)",
+  agent: "var(--hue-cyan)",
+  manager: "var(--hue-violet)",
+};
+
+function EmptyHero({
+  onPickStarter,
+  role,
+  actorName,
+}: {
+  onPickStarter: (q: string) => void;
+  role: Role;
+  actorName: string | null;
+}) {
+  // The widest noun sizes the container so the rotating span doesn't reflow.
   const widest = ROTATING_NOUNS.reduce((a, b) => (b.length > a.length ? b : a));
+  const starters = STARTERS_BY_ROLE[role];
+  const hue = ROLE_HUE[role];
   return (
     <div className="brand-bg flex flex-1 min-h-0 flex-col items-center overflow-y-auto px-6 py-10 sm:px-8">
       <div className="my-auto w-full max-w-3xl space-y-10">
@@ -132,6 +255,20 @@ function EmptyHero({ onPickStarter }: { onPickStarter: (q: string) => void }) {
             <span className="font-mono text-2xs uppercase tracking-wider text-fg-3">
               Atom · ready
             </span>
+            {actorName && (
+              <>
+                <span className="text-fg-5">·</span>
+                <span
+                  className="rounded border px-1 font-mono text-2xs uppercase tracking-wider"
+                  style={{ color: hue, borderColor: hue }}
+                >
+                  {ROLE_LABEL[role]}
+                </span>
+                <span className="font-mono text-2xs text-fg-3">
+                  {actorName}
+                </span>
+              </>
+            )}
           </div>
           <h1 className="text-4xl font-semibold tracking-tightest text-fg sm:text-5xl">
             Talk to your IT desk.
@@ -181,14 +318,16 @@ function EmptyHero({ onPickStarter }: { onPickStarter: (q: string) => void }) {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="font-mono text-2xs uppercase tracking-wider text-fg-4">
-              Try one of these
+              {role === "admin"
+                ? "Try one of these"
+                : `Try one of these as ${ROLE_LABEL[role]}`}
             </div>
             <div className="font-mono text-2xs text-fg-5">
-              {STARTERS.length} starters · click to run
+              {starters.length} starters · click to run
             </div>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {STARTERS.map((s) => (
+            {starters.map((s) => (
               <StarterCard
                 key={s.query}
                 starter={s}
@@ -375,17 +514,20 @@ function Turn({
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
             {message.content}
           </p>
+        ) : message.scopeRefusal && message.scopeRefusal.length > 0 ? (
+          <ScopeRefusalCard errors={message.scopeRefusal} />
         ) : (
           <Markdown content={message.content} />
         )}
 
         {!message.pending &&
-          intent === "ambiguous" &&
+          (intent === "ambiguous" || intent === "out_of_scope") &&
           (plan?.clarification_needed || plan?.clarification_options) && (
             <ClarificationPrompt
               text={plan?.clarification_needed ?? null}
               options={plan?.clarification_options}
               onPick={onPickStarter}
+              kind={intent === "out_of_scope" ? "refusal" : "ambiguous"}
             />
           )}
 
@@ -403,13 +545,7 @@ function Turn({
   );
 }
 
-/**
- * Three-step indicator shown while a query is in flight. The backend
- * has no streaming today; steps advance on a fixed schedule that
- * roughly maps to receive → planner LLM → responder LLM. The final
- * step stays in shimmer until the response actually arrives — it
- * never auto-completes itself.
- */
+/** Fixed-schedule three-step progress indicator (no streaming yet). */
 function ProgressStepper() {
   const [stage, setStage] = useState(0);
   const [longRun, setLongRun] = useState(false);
@@ -483,26 +619,30 @@ function ProgressStepper() {
   );
 }
 
-/**
- * Rendered inside a Turn when the planner classified the user's query as
- * ambiguous. Shows the clarification copy plus optional one-click
- * re-phrasings that fire the existing send pipeline. The `options` field
- * is forward-compat with backend support (`QueryPlan.clarification_options`);
- * when missing, the card degrades to a styled hint with a rephrase nudge.
- */
+/** Clarification card for ambiguous / out_of_scope intents. */
 function ClarificationPrompt({
   text,
   options,
   onPick,
+  kind = "ambiguous",
 }: {
   text: string | null;
   options?: string[];
   onPick?: (q: string) => void;
+  kind?: "ambiguous" | "refusal";
 }) {
+  const heading =
+    kind === "refusal" ? "Out of scope for this view" : "Atom needs a hint";
+  const accent =
+    kind === "refusal" ? "border-coral/40 bg-coral/5" : "border-amber/40 bg-amber/5";
+  const accentText =
+    kind === "refusal" ? "text-coral" : "text-amber";
   return (
-    <div className="mt-4 rounded-md border border-amber/40 bg-amber/5 p-4">
-      <div className="font-mono text-2xs uppercase tracking-wider text-amber">
-        Atom needs a hint
+    <div className={`mt-4 rounded-md border ${accent} p-4`}>
+      <div
+        className={`font-mono text-2xs uppercase tracking-wider ${accentText}`}
+      >
+        {heading}
       </div>
       {text && <p className="mt-2 text-sm text-fg-2">{text}</p>}
       {options && options.length > 0 && onPick && (
@@ -521,7 +661,35 @@ function ClarificationPrompt({
       <div className="mt-3 font-mono text-2xs text-fg-4">
         {options && options.length > 0
           ? "Pick one above, or rephrase below."
-          : "Try rephrasing below — add a verb like 'raised', 'assigned to', or 'reports to'."}
+          : kind === "refusal"
+            ? "Switch persona from the header to test a different view, or rephrase."
+            : "Try rephrasing below."}
+      </div>
+    </div>
+  );
+}
+
+function ScopeRefusalCard({ errors }: { errors: string[] }) {
+  return (
+    <div className="rounded-md border border-coral/40 bg-coral/5 p-4">
+      <div className="font-mono text-2xs uppercase tracking-wider text-coral">
+        Plan rejected by guardrails
+      </div>
+      <p className="mt-2 text-sm text-fg-2">
+        The plan Atom drafted violates the current view scope. The validator
+        caught it before any data was read.
+      </p>
+      <ul className="mt-2 space-y-1">
+        {errors.map((e, i) => (
+          <li key={i} className="flex items-start gap-2 font-mono text-2xs text-fg-2">
+            <span className="text-coral">·</span>
+            <span className="break-words">{e}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 font-mono text-2xs text-fg-4">
+        Switch persona from the header to test a different view, or rephrase
+        below.
       </div>
     </div>
   );

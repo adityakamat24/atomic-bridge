@@ -4,6 +4,7 @@ from typing import Any
 
 from src.core.data_store import Filter
 from src.core.schema_graph import SchemaGraph, ValueMap
+from src.guardrails.view_scope import ViewScope
 from src.planner.plan_schema import (
     AggregateOp,
     FindOp,
@@ -59,8 +60,13 @@ class PlanValidator:
 
     # ------------------------------------------------------------------ API
 
-    def validate(self, plan: QueryPlan) -> QueryPlan:
+    def validate(
+        self,
+        plan: QueryPlan,
+        view_scope: ViewScope | None = None,
+    ) -> QueryPlan:
         errors: list[str] = []
+        scope = view_scope or ViewScope.admin()
 
         if plan.intent in ("ambiguous", "out_of_scope"):
             return plan  # already vetted by Pydantic model_validator
@@ -91,6 +97,7 @@ class PlanValidator:
         var_entity: dict[str, str] = {}
         for op in plan.operations:
             self._validate_op(op, defined_vars, var_entity, errors)
+            self._validate_op_scope(op, scope, errors)
             defined_vars.add(op.id)
             self._record_var_entity(op, var_entity)
 
@@ -144,6 +151,27 @@ class PlanValidator:
             self._check_resolve(op, defined_vars, errors)
         elif isinstance(op, WriteProposalOp):
             self._check_write_proposal(op, defined_vars, errors)
+
+    def _validate_op_scope(
+        self,
+        op: Operation,
+        scope: ViewScope,
+        errors: list[str],
+    ) -> None:
+        if scope.is_admin:
+            return
+        if isinstance(op, FindOp):
+            has_filter = any(
+                f.field.endswith("name") or f.field == "sys_id"
+                for f in op.filters
+            )
+            msg = scope.reject_find(op.entity, has_filter)
+            if msg:
+                errors.append(f"op {op.id!r}: {msg}")
+        elif isinstance(op, AggregateOp):
+            msg = scope.reject_aggregate()
+            if msg:
+                errors.append(f"op {op.id!r}: {msg}")
 
     def _check_find(self, op: FindOp, errors: list[str]) -> None:
         if not self._graph.has_entity(op.entity):

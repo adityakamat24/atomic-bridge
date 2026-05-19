@@ -27,6 +27,8 @@ from src.api.rate_limit import RateLimitExceededError
 from src.api.types import QueryRequest, QueryResponse
 from src.core.trace import ExecutionError
 from src.guardrails.input_validator import InputRejected
+from src.guardrails.output_filter import OutputFilter
+from src.guardrails.view_scope import ViewScope
 from src.planner.plan_validator import PlanValidationError
 from src.planner.planner import PriorTurn
 
@@ -56,9 +58,10 @@ async def submit_query(
     t0 = time.perf_counter()
     injection_score = container.injection_detector.score(validated.text)
 
-    # Session-aware prior turn for pronoun resolution.
+    # Prior turn for pronoun resolution + per-request view scope.
     prior: PriorTurn | None = None
     session = None
+    scope = ViewScope.admin()
     if req.session_id:
         session = await container.session_store.get(req.session_id)
         if session and session.last_query:
@@ -70,10 +73,18 @@ async def submit_query(
                     if isinstance(e, dict)
                 ),
             )
+        if session:
+            scope = ViewScope.from_session(session)
+
+    # Per-request OutputFilter: admin sees sensitive fields verbatim,
+    # everyone else gets them redacted.
+    request_output_filter = OutputFilter.from_view_scope(container.graph, scope)
 
     # LLM call 1: planner.
     try:
-        plan = await container.planner.plan(validated.text, prior_turn=prior)
+        plan = await container.planner.plan(
+            validated.text, prior_turn=prior, view_scope=scope,
+        )
     except PlanValidationError as exc:
         raise HTTPException(
             status_code=400,
@@ -85,22 +96,25 @@ async def submit_query(
             status_code=500, detail=f"planner failed: {exc}",
         ) from exc
 
-    # out_of_scope: canned refusal, no execution, no second LLM call.
+    # out_of_scope: prefer the planner's clarification over the generic
+    # ITSM-only fallback so role-scoped refusals read better.
     if plan.intent == "out_of_scope":
         elapsed = int((time.perf_counter() - t0) * 1000)
         await _audit(
             container, request_id, req, validated.text,
             injection_score, plan, "out_of_scope", elapsed,
         )
+        message = plan.clarification_needed or (
+            "I can only help with IT service questions about tickets, "
+            "users, teams, and knowledge articles."
+        )
         return QueryResponse(
             request_id=request_id,
-            answer=(
-                "I can only help with IT service questions about tickets, "
-                "users, teams, and knowledge articles."
-            ),
+            answer=message,
             plan=plan if req.show_plan else None,
             intent="out_of_scope",
             confidence=1.0,
+            clarification_needed=plan.clarification_needed,
             latency_ms=elapsed,
         )
 
@@ -132,6 +146,7 @@ async def submit_query(
             query=validated.text,
             request_id=request_id,
             scorer=container.relation_scorer,
+            view_scope=scope,
         )
     except ExecutionError as exc:
         logger.exception("execute_plan_failed")
@@ -173,7 +188,8 @@ async def submit_query(
     data: Any = result.output
     if isinstance(data, list):
         data = [
-            _filter_record(container, r, _record_entity(plan)) for r in data
+            _filter_record(request_output_filter, r, _record_entity(plan))
+            for r in data
         ]
 
     answer = await container.responder.respond(validated.text, plan, result)
@@ -229,7 +245,7 @@ def _record_entity(plan: object) -> str:
 
 
 def _filter_record(
-    container: AppContainer, record: dict[str, Any], entity: str,
+    filt: OutputFilter, record: dict[str, Any], entity: str,
 ) -> dict[str, Any]:
     if not isinstance(record, dict):
         return record
@@ -238,7 +254,7 @@ def _filter_record(
             k: v for k, v in record.items()
             if not (k == "sys_id" or k.endswith("_sys_id"))
         }
-    return container.output_filter.filter_record(record, entity)
+    return filt.filter_record(record, entity)
 
 
 async def _audit(
