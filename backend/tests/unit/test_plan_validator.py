@@ -456,11 +456,10 @@ def test_declarative_traverse_rejects_unknown_to_entity(
 def test_declarative_traverse_accepts_non_shortest_chain_within_cap(
     validator: PlanValidator,
 ) -> None:
-    """Non-shortest chains are now ACCEPTED — the reviewer asked us to
-    rank candidate chains by user phrasing, which requires allowing
-    longer chains alongside shorter ones. The PDF's "Ravi's team"
-    query needs a 2-hop chain to sys_user_group even though the 1-hop
-    `managesGroups` chain exists. Tests of the old rejection are gone."""
+    """Non-shortest chains are accepted within MAX_PATH_HOPS so the
+    relation scorer can rank by user phrasing. "Ravi's team" needs a
+    2-hop chain to sys_user_group even though the 1-hop
+    `managesGroups` exists."""
     plan = _plan(
         FindOp(id="u", entity="sys_user"),
         TraverseOp(

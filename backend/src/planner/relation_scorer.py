@@ -1,27 +1,15 @@
 """LLM-driven relation-scoring pass.
 
-The reviewer's prescription verbatim:
+Invoked by SchemaGraph.walk when the planner emits a declarative
+traverse with `to_entity` but no `path`, and more than one simple chain
+exists between source and target. The scorer ranks the candidates by
+which one best matches the user's phrasing, replacing what would
+otherwise be hard-coded role-routing rules.
 
-  "Pair that with an LLM-driven relation-scoring pass when multiple paths
-  exist between two entities, ask the response-side LLM (with the schema
-  as context) to rank them by which one best matches the user's phrasing,
-  rather than hard-coding role-aware disambiguation."
-
-Invoked by SchemaGraph.walk when:
-  1. The planner emitted `to_entity` without `path` (delegating chain
-     selection to the engine), AND
-  2. `graph.shortest_relation_paths(source, target)` returns more than
-     one chain.
-
-The scorer is a separate LLM ROLE but uses the same instance as the
-quarantined responder client — text-only, no tool use. It sees the
-schema markdown, the candidate paths (rendered as verb chains), and the
-user's original query. It returns a chosen path index plus a one-line
-reasoning string that the trace records for inspection.
-
-The scorer never sees record data — only metadata about the candidate
-verbs. The DualLLMBoundary asserts the planner client and the
-quarantined/scorer client are distinct objects at app startup.
+The scorer is a separate LLM role that shares the quarantined
+responder client (text-only, no tool use). It sees schema metadata and
+the user query, never record data. DualLLMBoundary asserts the planner
+client and the quarantined client are distinct objects at startup.
 """
 from __future__ import annotations
 
@@ -70,16 +58,10 @@ Do not include any explanation outside the JSON. Do not include record data."""
 
 @dataclass(frozen=True)
 class ScorerChoice:
-    """The scorer's verdict on a multi-path traverse.
+    """Ranking + data-adaptive fallback in place of hardcoded role rules.
 
-    ``ranking`` is the LLM's preference order over the candidate indices
-    (most-likely-intended first). The engine walks the top-ranked chain
-    first; if it returns zero records, the engine falls back to the
-    next-ranked, and so on. This is the "rank them" prescription from
-    the reviewer made concrete — ranking + data-adaptive fallback,
-    rather than a hardcoded role-routing heuristic.
-
-    ``chosen_index`` is exposed for back-compat — it's just ``ranking[0]``.
+    The engine walks the top-ranked chain first; if it returns zero
+    records, it falls back to the next-ranked.
     """
 
     ranking: list[int]

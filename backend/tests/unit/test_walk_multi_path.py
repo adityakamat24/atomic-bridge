@@ -139,9 +139,8 @@ async def test_walk_two_hop_engineering_users_to_incidents(graph: SchemaGraph) -
 
 
 async def test_walk_three_hop_user_to_kb_via_category(graph: SchemaGraph) -> None:
-    """The reviewer's hero example shape: sys_user -> incident ->
-    category -> kb_knowledge. Walk Ravi's assigned incidents to their
-    categories' KB articles."""
+    """3-hop walk sys_user -> incident -> category -> kb_knowledge:
+    Ravi's assigned incidents to their categories' KB articles."""
     ravi = graph.find(
         "sys_user",
         [Filter(field="name", operator="eq", value="Ravi Kumar")],
@@ -411,11 +410,10 @@ async def test_walk_with_empty_path_walks_top_ranked_with_data(
 async def test_walk_falls_back_to_next_ranked_when_top_returns_empty(
     graph: SchemaGraph,
 ) -> None:
-    """The reviewer's "rank them" prescription made concrete: when the
-    top-ranked chain returns zero records (e.g. ``managesGroups`` for
-    a non-manager), the engine walks the next-ranked chain. This is the
-    PDF's "Ravi's team" query made to work without a hardcoded role
-    routing rule — Ravi isn't a manager, so the manager-chain is empty,
+    """Rank-then-fall-back recovery: when the top-ranked chain returns
+    zero records (e.g. ``managesGroups`` for a non-manager), the engine
+    walks the next-ranked chain. "Ravi's team" works without a hardcoded
+    role rule: Ravi isn't a manager, so the manager-chain is empty,
     so the engine adapts to the team-via-incidents chain. Pure data
     adaptation, no role classification."""
     ravi = graph.find(

@@ -11,7 +11,7 @@ The system is hosted, so you don't need to clone, install, or run anything. Open
 - **Backend API:** https://itsm-bridge-backend.fly.dev (FastAPI, health at `/health`)
 - **MCP SSE endpoint:** https://itsm-bridge-backend.fly.dev:8001/sse (six tools, ready for any MCP client)
 
-The starter gallery in the demo covers the four query categories the PDF asks about, plus the trickier ones (a 3-hop walk, an ambiguous bare-name query, a self-relation walk for "Ravi's manager", and the HITL write flow). Local setup is at the bottom if you want it, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
+The starter gallery in the demo covers the four core query shapes (lookup, knowledge, analytical, cross-reference) plus the trickier ones: a 3-hop walk, an ambiguous bare-name query, a self-relation walk for "Ravi's manager", and the HITL write flow. Local setup is at the bottom if you want it, but the hosted demo is the recommended path. The Fly machine is pinned to always-on (`min_machines_running = 1`), so there's no cold start on the first request.
 
 > The live demo ships with a **persona picker** in the header. Click it for a searchable list of every user in the data, each tagged with a server-derived role: end_user, agent, manager, or admin. Admin keeps full access. End users see only their own tickets. Agents see their queue plus their groups' workload. Managers see their direct reports' tickets. Switch personas and the same query plays out differently. See the [Role-based view control](#role-based-view-control) section for the visibility matrix and how it's enforced.
 
@@ -51,7 +51,7 @@ If you have an Anthropic key you can run the full eval (~$0.50 in credits). With
 
 # Design
 
-The PDF asks for four things in the design write-up: how the graph schema is laid out, how the planner works, the trade-offs behind the choice of graph representation, and what I'd do differently with more time. Those are the four sections below.
+The four sections below cover the graph schema, the planner, the trade-offs behind the choice of graph representation, and what I'd do differently with more time.
 
 ## The graph
 
@@ -79,11 +79,11 @@ The planner sees `verb_phrase`. The executor walks `via_field`. Neither layer kn
 
 Six edge types tie everything together. `HAS_FIELD` connects an entity to its columns. `MAPS_THROUGH` connects a field to its value map. `VIA` connects a relation to the field that physically implements it. `FROM` and `TO` connect a relation to its two endpoints. `INVERSE_OF` connects a relation to its dual.
 
-The PDF specifically calls out three relationships that "should be edges":
+Three relationships are first-class edges in the schema:
 
-1. `incident.caller_id → user`. Present as `incident.reportedBy`.
-2. `incident.assignment_group → group`. Present as `incident.handledBy`.
-3. *"A KB article's kb_category maps to an incident's category"*. Present as a four-relation bridge through a `category` entity.
+1. `incident.caller_id → user`, present as `incident.reportedBy`.
+2. `incident.assignment_group → group`, present as `incident.handledBy`.
+3. A KB article's `kb_category` maps to an incident's `category`, present as a four-relation bridge through a `category` entity.
 
 The third one is worth a paragraph. `Category` is a first-class entity with one trick: the `sys_id` of each Category record is the category name itself (`"Network"`, `"Software"`, etc.). That means an existing `incident.category="Network"` already references the right record. No data files changed, only `schema.yaml` and a derived `categories.json`. The bridge is a real graph walk: `kb → category → incidents in that category`. Test: `test_kb_to_incidents_via_category_bridge`.
 
@@ -129,7 +129,7 @@ A worked plan for *"Show me open incidents raised by people in Engineering":*
 }
 ```
 
-The reviewer's hero example, *"KB articles relevant to incidents Ravi's team is handling"*, becomes a single declarative traverse with a 3-hop path:
+A 3-hop query like *"KB articles relevant to incidents Ravi's team is handling"* becomes a single declarative traverse:
 
 ```json
 {"op": "traverse", "id": "kb", "from": "$u",
@@ -161,7 +161,7 @@ Three options were on the table.
 
 **A plain adjacency dict.** What I started with. Looked like `{entity: {relation_name: target_entity}}`. Worked for one hop. Broke when I needed to ask "what's the cardinality of this relation in the reverse direction?", the kind of question that needs relation metadata, not just topology. I could have added a parallel `relations_meta` dict and a `field_meta` dict and a `value_maps` dict, but at some point you've reinvented a graph library and done it badly.
 
-**NetworkX `MultiDiGraph`.** Where I landed. Directed edges with typed attributes, parallel edges between the same node pair (useful for `INVERSE_OF` edges that share endpoints with the relations they invert), and a BFS primitive used for `shortest_relation_paths` and `validate_path`. It's in-process: no service to deploy, no migrations, nothing to operate. The cost is that the graph isn't queryable in a structured language. You can't hand a reviewer a Cypher query and say "this is what the planner does." Instead the (filtered) graph gets serialized to a markdown blob via `to_llm_context()` and passed to the LLM. That serialization step is the main thing I'd revisit if the graph needed to scale past 50 tables. At that point the planner's context window starts to matter and a retrieval-based subgraph selection would sit on top of the structural enumeration.
+**NetworkX `MultiDiGraph`.** Where I landed. Directed edges with typed attributes, parallel edges between the same node pair (useful for `INVERSE_OF` edges that share endpoints with the relations they invert), and a BFS primitive used for `shortest_relation_paths` and `validate_path`. It's in-process: no service to deploy, no migrations, nothing to operate. The cost is that the graph isn't queryable in a structured language. There's no Cypher query you can point at to say "this is what the planner does." Instead the (filtered) graph gets serialized to a markdown blob via `to_llm_context()` and passed to the LLM. That serialization step is the main thing I'd revisit if the graph needed to scale past 50 tables. At that point the planner's context window starts to matter and a retrieval-based subgraph selection would sit on top of the structural enumeration.
 
 A practical consequence of choosing in-process NetworkX is that the whole stack is one container. The backend cold-starts in about 2 seconds. The schema is a YAML file. Adding a new ITSM table is a YAML edit, demonstrated mechanically by `test_adding_entity_to_yaml_is_reflected_without_code_changes`. That test parses the production schema, appends a new `change_request` entity, reloads, and asserts it appears in the planner's prompt. No Python changed.
 
@@ -206,7 +206,7 @@ The matrix lives in [`backend/src/guardrails/view_scope.py`](backend/src/guardra
 
 Identity is precomputed at session-create. POST `/v1/session` accepts `{role?, as_user_sys_id?}`. When `as_user_sys_id` is set without a role, the server derives it from the user's data (manager > agent > end_user); an explicit `role` overrides the derivation. The handler resolves the actor's groups, direct reports, managed groups, and visible-users set in one pass. The session is the source of truth for visibility; subsequent queries just consult it.
 
-`GET /v1/personas` returns the synthetic admin row plus every active user with their derived role, member groups, direct-report count, and managed-group count. The frontend uses this for the persona picker so a reviewer can switch to any actor in the data, not a hardcoded shortlist.
+`GET /v1/personas` returns the synthetic admin row plus every active user with their derived role, member groups, direct-report count, and managed-group count. The frontend uses this for the persona picker, so you can switch to any actor in the data instead of a hardcoded shortlist.
 
 Tests: 28 unit tests in [`test_view_scope.py`](backend/tests/unit/test_view_scope.py) cover the matrix and `derive_role` directly. Ten integration tests in [`test_role_visibility.py`](backend/tests/integration/test_role_visibility.py) exercise the full pipeline (planner -> validator -> executor) per role, including the validator rejection paths and PII stripping. Three more in [`test_api.py`](backend/tests/integration/test_api.py) cover the `/v1/personas` endpoint and the role-derivation / role-override behaviour at session-create time.
 
@@ -249,9 +249,9 @@ What's NOT in this build, deliberately:
 
 # What I added on top
 
-The four-component spec gets a working prototype. I built more than that because Atomicwork's product is built around three things a bare-minimum prototype wouldn't show:
+Beyond the core mediation layer, the system includes three pieces that mirror Atomicwork's product surface:
 
-**Role-based view control.** Four roles (end_user, agent, manager, admin) with three enforcement layers. The planner sees a view-scope block in its prompt and emits a scope-appropriate plan, or sets `intent=out_of_scope` when the user's request clearly exceeds the role. The plan validator hard-rejects clear violations (an end user trying to enumerate the user table, an end user asking to aggregate). The executor applies a row-level filter after every `find` and after every hop in `walk`, so chains that pass through out-of-scope records get pruned silently. Three layers, one matrix in [`guardrails/view_scope.py`](backend/src/guardrails/view_scope.py), with 38 tests across unit and integration. The persona picker in the header reads `/v1/personas` and lists every user in the data with a server-derived role, so a reviewer can switch to any actor and watch the same query play out across views.
+**Role-based view control.** Four roles (end_user, agent, manager, admin) with three enforcement layers. The planner sees a view-scope block in its prompt and emits a scope-appropriate plan, or sets `intent=out_of_scope` when the user's request clearly exceeds the role. The plan validator hard-rejects clear violations (an end user trying to enumerate the user table, an end user trying to aggregate). The executor applies a row-level filter after every `find` and after every hop in `walk`, so chains that pass through out-of-scope records get pruned silently. Three layers, one matrix in [`guardrails/view_scope.py`](backend/src/guardrails/view_scope.py), with 38 tests across unit and integration. The persona picker in the header reads `/v1/personas` and lists every user in the data with a server-derived role, so you can switch to any actor and watch the same query play out across views.
 
 **HITL writes.** Atomicwork's Atom is HITL-first. The write path here mirrors that. The planner emits a `write_proposal` op, the executor builds a per-field diff and stashes it under a one-time token, the frontend renders an approval dialog. Confirmation triggers a re-fetch and an optimistic-lock check on `sys_updated_on` before mutating. Only `create_incident` and `update_incident` are allowed, and the field set is whitelisted at the schema level. End users can propose writes only on their own tickets (validator-checked at plan time, executor-checked at confirm time). A prompt-injected "delete all incidents" cannot be represented in the plan, because the op doesn't exist.
 
@@ -259,7 +259,7 @@ The four-component spec gets a working prototype. I built more than that because
 
 **Guardrails.** Five named defenses, each with a paper citation. Action-Selector (Beurer-Kellner et al., 2025), the Plan-Then-Execute validation gate, Dual LLM (Willison, 2023), Spotlighting + Sandwich (Liu et al., USENIX 2024), and an input validator with a `sha256`-chained audit log verified across 100 sequential entries.
 
-There's also a 44-query gold eval suite, a Datadog-style trace inspector in the frontend with an inline schema graph view that lights up the walked chain in red, and live deploys. None of those are on the critical path for the four required components, so a reviewer who only wants to evaluate the spec can ignore this section.
+There's also a 44-query gold eval suite, a Datadog-style trace inspector in the frontend with an inline schema graph view that lights up the walked chain in red, and live deploys.
 
 ---
 

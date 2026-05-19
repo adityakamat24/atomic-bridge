@@ -97,11 +97,10 @@ export interface TraceStep {
   scoring_reasoning?: string | null;
   scoring_confidence?: number | null;
   /**
-   * Every chain the engine attempted, in ranking order. The reviewer
-   * asked us to RANK chains and walk them; this records what actually
-   * happened. When the top-ranked chain returned zero records, the
-   * engine fell back to the next-ranked. The entry with `used: true`
-   * is the one whose records made it into the final output.
+   * Every chain the engine attempted, in ranking order. When the
+   * top-ranked chain returned zero records, the engine fell back to
+   * the next. The entry with `used: true` is the one whose records
+   * made it into the final output.
    */
   attempted_paths?: AttemptedPath[] | null;
 }
@@ -164,11 +163,10 @@ export interface SessionCreateResponse {
 }
 
 /**
- * Persona row returned by GET /v1/personas. The frontend renders these
- * in the picker so a reviewer can switch to any actor, not just a
- * hardcoded four. The role is server-derived from the user's data
- * (manages_reports > member_groups > end_user). The synthetic admin
- * row is always first.
+ * Persona row returned by GET /v1/personas. The picker renders these
+ * so you can switch to any actor in the data. The role is
+ * server-derived (manages_reports > member_groups > end_user); the
+ * synthetic admin row is always first.
  */
 export interface PersonaSummary {
   sys_id: string | null;

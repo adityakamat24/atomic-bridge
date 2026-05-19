@@ -390,13 +390,11 @@ def test_validate_path_rejects_chain_ending_at_wrong_entity_for_reflexive() -> N
 
 
 def test_validate_path_accepts_non_shortest_chain_within_max_hops() -> None:
-    """The validator no longer rejects non-shortest chains. The reviewer
-    asked us to RANK candidate chains by user phrasing — that
-    requires allowing longer chains alongside shorter ones (e.g., the
-    PDF's "Ravi's team" query needs a 2-hop chain to sys_user_group
-    even though the 1-hop `managesGroups` chain exists). The validator
-    still rejects chains beyond max_hops + disconnected / mismatched /
-    invented chains."""
+    """The validator accepts any simple chain within max_hops so the
+    relation scorer can rank by user phrasing. "Ravi's team" needs a
+    2-hop chain to sys_user_group alongside the 1-hop `managesGroups`.
+    Disconnected / mismatched / invented chains and chains beyond
+    max_hops are still rejected."""
     graph = load(REAL_SCHEMA)
     # 3-hop chain from sys_user to incident going through sys_user_group.
     # The shortest sys_user -> incident is 1 hop; this 3-hop chain is a

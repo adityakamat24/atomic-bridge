@@ -1,13 +1,8 @@
-"""Tests for the RelationScorer — the LLM-driven path-picker the
-reviewer prescribed for multi-path declarative traversals.
+"""Tests for the RelationScorer, the LLM-driven path-picker invoked
+when the planner leaves `path` empty and multiple simple chains exist.
 
-The scorer is invoked by SchemaGraph.walk when:
-  1. The planner emitted a declarative traverse op with NO explicit path.
-  2. graph.shortest_relation_paths returned more than one shortest chain.
-
-It uses the response-side (quarantined) LLM client — same instance, new
-role. It sees only schema-level metadata (verbs, source/target entity
-names) and the user's query. It must NEVER see record data.
+It uses the response-side (quarantined) LLM client (same instance, new
+role) and sees only schema metadata + the user's query, never records.
 """
 from __future__ import annotations
 

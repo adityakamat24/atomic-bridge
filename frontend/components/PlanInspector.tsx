@@ -434,9 +434,8 @@ function OpRow({ op, index }: { op: Record<string, unknown>; index: number }) {
 }
 
 /**
- * Always-visible compact summary of each op's intent. The reviewer asked
- * for inspectable plans — a JSON dump behind a toggle is the bare minimum.
- * This row makes the plan readable at a glance:
+ * Always-visible compact summary of each op's intent. Makes the plan
+ * readable at a glance without expanding the JSON dump:
  *
  *   find #u                 sys_user where name contains "Ravi"
  *   traverse #kb            $u → raised incidents → in category → has articles → kb_knowledge
@@ -837,12 +836,10 @@ function TraceView({ trace }: { trace: ExecutionTrace | null }) {
                   </div>
                 )}
                 {s.attempted_paths && s.attempted_paths.length > 1 && (
-                  // When the engine had to walk more than one chain (i.e.
-                  // a higher-ranked candidate returned zero records, so it
-                  // fell back to the next), surface what actually happened.
-                  // This is the reviewer's "rank them" prescription made
-                  // visible — the user can see which interpretations were
-                  // tried and which one produced the answer.
+                  // When the engine fell back through multiple chains,
+                  // surface the ranking so the user sees which
+                  // interpretations were tried and which produced the
+                  // answer.
                   <div className="mt-2 rounded border border-warning/30 bg-warning/5 p-2">
                     <div className="font-mono text-2xs uppercase tracking-wider text-warning">
                       Engine fallback · walked {s.attempted_paths.length} chains

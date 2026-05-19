@@ -218,8 +218,8 @@ def test_query_analytical_returns_count(
 def test_query_cross_reference_multi_hop(
     client: TestClient, llms: dict[str, ScriptedLLM]
 ) -> None:
-    """The reviewer's central case: cross-table walks emitted as a
-    single declarative traverse step with the relation chain inline."""
+    """Cross-table walks emitted as a single declarative traverse step
+    with the relation chain inline."""
     llms["planner"].queue_tool(
         {
             "intent": "cross_reference",

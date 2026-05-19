@@ -211,13 +211,12 @@ class PlanValidator:
             return
 
         # The planner may either:
-        #  (a) supply `path` explicitly — when the user's phrasing makes
-        #      the chain unambiguous ("tickets Ravi raised"); we validate
-        #      it's a valid shortest chain.
-        #  (b) leave `path` empty — letting the executor enumerate
-        #      shortest chains and delegate path-picking to the LLM
-        #      scorer (the reviewer's prescription). We only verify the
-        #      target is reachable.
+        #  (a) supply `path` explicitly when the user's phrasing makes
+        #      the chain unambiguous ("tickets Ravi raised"); we
+        #      validate it's a valid chain within MAX_PATH_HOPS.
+        #  (b) leave `path` empty and let the executor enumerate
+        #      simple chains + delegate path-picking to the LLM scorer.
+        #      In that case we only verify the target is reachable.
         if op.path:
             if len(op.path) > MAX_PATH_HOPS:
                 errors.append(

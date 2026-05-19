@@ -191,9 +191,9 @@ async def test_planner_accepts_non_shortest_chain_within_max_hops(
     planner_and_llm: tuple[Planner, _ScriptedLLM],
 ) -> None:
     """A 3-hop chain via sys_user_group is accepted even though the
-    shortest sys_user -> incident is 1 hop. The reviewer's "rank them"
-    prescription requires the validator to allow any valid chain ≤
-    max_hops and let the scorer / engine choose among them."""
+    shortest sys_user -> incident is 1 hop. The validator allows any
+    valid chain within MAX_PATH_HOPS; the scorer / engine pick among
+    them."""
     planner, llm = planner_and_llm
     llm.next = {
         "intent": "cross_reference",

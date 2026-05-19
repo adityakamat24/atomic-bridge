@@ -47,7 +47,7 @@ class WalkResult:
     filters_by_entity fired.
 
     ``scorer_choice`` is populated only when the engine had to rank
-    multiple candidate chains (the reviewer's LLM-driven scoring pass).
+    multiple candidate chains via the LLM-driven scoring pass.
 
     ``attempted_paths`` records every chain the engine tried, in
     ranking order — each entry has ``path``, ``records_count``, and
@@ -448,15 +448,14 @@ class SchemaGraph:
         Differs from ``shortest_relation_paths`` in two important ways:
 
         1. **Does NOT restrict to chains tied for shortest length.** Returns
-           a 1-hop chain alongside a 2-hop and 3-hop chain between the same
-           pair when those longer chains exist. The reviewer asked us to
-           rank chains by user phrasing — that requires presenting MORE
-           than just the shortest options. The PDF's example query "What
-           open issues does Ravi Kumar's team currently have assigned to
-           them?" requires walking a 3-hop chain (sys_user → incident →
-           sys_user_group → incident) when the user is not a manager, and
-           the 1-hop shortest (sys_user.managesGroups → sys_user_group)
-           gives an empty result.
+           a 1-hop chain alongside 2-hop and 3-hop chains between the same
+           pair when those longer chains exist. Path ranking by user
+           phrasing requires presenting more than just the shortest
+           options, e.g., "What open issues does Ravi's team currently
+           have assigned to them?" walks a 2-hop chain (sys_user
+           assignee chain plus handledBy) when the actor isn't a
+           manager, while the 1-hop ``managesGroups`` shortest yields
+           empty for non-managers.
 
         2. **Sorts by length, then by insertion order** so callers can
            prefer shorter chains while still seeing longer alternatives.
@@ -608,15 +607,13 @@ class SchemaGraph:
         if errors:
             return errors
 
-        # Any simple chain within max_hops is acceptable. The reviewer's
-        # prescription is to RANK candidate chains by user phrasing, not
-        # to mechanically pick the shortest — and the PDF's "Ravi's
-        # team" example requires a 2-hop chain that is NOT shortest
-        # (the shortest sys_user -> sys_user_group is `managesGroups`,
-        # which is empty for non-manager staff). We still cap at
-        # max_hops to bound search; we still reject disconnected /
-        # invented / mismatched chains above. The "must be shortest"
-        # gate is removed deliberately.
+        # Any simple chain within max_hops is acceptable. Ranking
+        # candidates by user phrasing requires considering longer
+        # chains too, since "Ravi's team" needs a 2-hop walk
+        # (sys_user assignee chain + handledBy) that is NOT the
+        # 1-hop shortest (``managesGroups``, empty for non-managers).
+        # max_hops still bounds the search; disconnected / invented /
+        # mismatched chains are still rejected above.
         if len(path) > max_hops:
             errors.append(
                 f"path length {len(path)} exceeds max_hops={max_hops}"
